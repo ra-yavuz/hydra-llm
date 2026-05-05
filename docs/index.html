@@ -15,6 +15,11 @@
 <meta property="og:url" content="https://ra-yavuz.github.io/hydra-llm/">
 <meta property="og:site_name" content="ra-yavuz">
 <meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://ra-yavuz.github.io/hydra-llm/logo-icon.png">
+<meta name="twitter:image" content="https://ra-yavuz.github.io/hydra-llm/logo-icon.png">
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <style>
   :root {
     --fg: #1a1a1a; --muted: #5e5e5e; --bg: #f4f1ec; --card: #ffffff;
@@ -34,6 +39,8 @@
   main { max-width: 780px; margin: 0 auto; padding: 48px 24px 96px; }
   .crumb { font-size: 0.86rem; color: var(--muted); margin: 0 0 18px; }
   .crumb a { color: var(--muted); }
+  .logo { width: 132px; height: 132px; display: block; margin: 0 0 14px; }
+  @media (prefers-color-scheme: dark) { .logo { filter: invert(1); } }
   h1 { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.005em; }
   p.tag { color: var(--muted); margin: 0 0 18px; font-size: 1rem; max-width: 60ch; }
   h2 { font-size: 1.15rem; margin: 36px 0 8px; }
@@ -56,6 +63,7 @@
 
 <p class="crumb"><a href="https://ra-yavuz.github.io/">ra-yavuz</a> / hydra-llm</p>
 
+<img class="logo" src="logo-icon.png" alt="hydra-llm logo: a three-headed hydra between angle brackets" width="132" height="132">
 <h1>hydra-llm</h1>
 <p class="tag">Run local LLMs the easy way. Pick a model, download it, chat with it. No cloud, no API key, no telemetry.</p>
 
