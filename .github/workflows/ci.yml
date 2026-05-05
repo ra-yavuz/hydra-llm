@@ -1,5 +1,13 @@
 name: ci
 
+# Unified CI shape across ra-yavuz/* packaged repos.
+#
+#   lint        project-specific lint (shellcheck + py_compile here)
+#   build-deb   produces dist/*.deb (and dist/*.plasmoid),
+#               uploaded as artifact "dist"
+#   release     tag-only. Downloads dist, creates GitHub Release, then
+#               dispatches each .deb to ra-yavuz/apt for auto-publish.
+
 on:
   push:
     branches: [main]
@@ -26,6 +34,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y dpkg-dev zip
       - name: Build .deb packages
         run: bash scripts/build-deb.sh
+      - name: Build plasmoid bundle
+        run: |
+          cd plasmoid
+          mkdir -p ../dist
+          zip -qr ../dist/hydra-llm.plasmoid metadata.json contents/
+          ls -la ../dist/hydra-llm.plasmoid
       - name: Inspect .deb packages
         run: |
           for d in dist/*.deb; do
@@ -33,12 +47,6 @@ jobs:
             dpkg-deb -I "$d"
             dpkg-deb -c "$d" | head -30
           done
-      - name: Build plasmoid bundle
-        run: |
-          cd plasmoid
-          mkdir -p ../dist
-          zip -qr ../dist/hydra-llm.plasmoid metadata.json contents/
-          ls -la ../dist/hydra-llm.plasmoid
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -64,3 +72,24 @@ jobs:
             dist/*.deb
             dist/*.plasmoid
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify ra-yavuz/apt to auto-publish
+        if: env.APT_DISPATCH_TOKEN != ''
+        env:
+          APT_DISPATCH_TOKEN: ${{ secrets.APT_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          for deb in dist/*.deb; do
+            [ -f "$deb" ] || continue
+            arch=$(dpkg-deb -f "$deb" Architecture)
+            url="https://github.com/${{ github.repository }}/releases/download/${tag}/$(basename "$deb")"
+            echo "Dispatching $deb -> ra-yavuz/apt"
+            curl -fsSL -X POST \
+              -H "Authorization: token $APT_DISPATCH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/ra-yavuz/apt/dispatches" \
+              -d "{\"event_type\":\"package-published\",\"client_payload\":{\"repo\":\"${{ github.repository }}\",\"tag\":\"${tag}\",\"arch\":\"${arch}\",\"deb_url\":\"${url}\"}}"
+          done
