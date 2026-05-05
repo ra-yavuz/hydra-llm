@@ -1,0 +1,48 @@
+#!/bin/sh
+# postinst for hydra-llm
+set -e
+
+case "$1" in
+    configure)
+        cat <<'EOF'
+
+hydra-llm installed.
+
+Next, run as YOUR user (not root):
+
+  hydra-llm setup
+
+That will:
+  * Build the llama-server Docker image (~5-10 min on first run)
+  * Download a 100 MB starter model
+  * Run an end-to-end smoke test
+
+Other commands to try:
+  hydra-llm doctor          detect your hardware
+  hydra-llm list-online     browse the model catalog
+  hydra-llm chat <id>       interactive chat (auto-starts the server)
+
+If you want the KDE Plasma 6 panel widget too:
+  sudo apt install hydra-llm-plasma
+
+Note: hydra-llm needs Docker. If your user is not in the 'docker' group,
+add yourself with `sudo usermod -aG docker $USER` and log out / back in.
+
+DISCLAIMER: This software runs LLMs locally, manages Docker containers on
+your behalf, and downloads multi-gigabyte model files from third-party hosts.
+It is provided AS IS, WITHOUT WARRANTY OF ANY KIND. See
+/usr/share/doc/hydra-llm/README.md for the full disclaimer.
+
+EOF
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

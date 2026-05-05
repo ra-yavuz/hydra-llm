@@ -1,0 +1,24 @@
+hydra-llm (0.1.0-1) unstable; urgency=low
+
+  * Initial release.
+  * Single-binary CLI (hydra-llm) with subcommands: doctor, setup, list,
+    list-online, download, remove, start, stop, stop-all, status, api,
+    chat, persona, config-path, uninstall, wipe, tray.
+  * Two Docker images (vulkan, cpu) built locally on first `setup`. Auto-
+    selects vulkan when /dev/dri is present; CPU image is also built as a
+    fallback. Transient build errors are retried; persistent failures fall
+    back to the CPU image.
+  * Curated 11-model catalog of community-quantized GGUFs that download
+    anonymously (no Hugging Face token required). Tier filter shows the
+    user only models that fit their hardware.
+  * Hardware doctor classifies the host into one of: tiny, laptop, halo,
+    workstation, server. Strix Halo iGPUs are recognised and marked
+    "spill" for models that exceed the VRAM carve-out.
+  * Persona files: drop a markdown file with optional YAML front matter
+    in ~/.config/hydra-llm/personas/ to make a chat alias.
+  * Persistent chat sessions in ~/.local/state/hydra-llm/sessions/.
+  * KDE Plasma 6 panel widget (hydra-llm-plasma) with a HAL-eye animated
+    indicator, per-model start/stop/chat/logs buttons, live CPU/RAM/GPU/
+    VRAM dots, and inline log console.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Tue, 05 May 2026 16:30:00 +0000

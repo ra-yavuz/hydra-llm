@@ -1,0 +1,33 @@
+#!/bin/sh
+# postrm for hydra-llm
+set -e
+
+case "$1" in
+    purge)
+        # Note: we DO NOT delete user files (~/.config/hydra-llm/,
+        # ~/.local/state/hydra-llm/, downloaded models). Those belong to the
+        # user; if they want them gone, `hydra-llm wipe` does that before
+        # uninstall. Same for built Docker images.
+        cat <<'EOF'
+
+hydra-llm package purged. The following user data was preserved:
+  ~/.config/hydra-llm/
+  ~/.local/state/hydra-llm/sessions/
+  ~/.local/share/hydra-llm/models/
+  Docker image hydra-llm/llama-server:*
+
+Remove them manually if you want a complete cleanup.
+
+EOF
+        ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

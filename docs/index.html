@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>hydra-llm - Run local LLMs the easy way</title>
+<meta name="description" content="hydra-llm: a Linux command-line tool by Ramazan Yavuz to run local LLMs via llama.cpp in Docker. Curated model catalog, anonymous Hugging Face downloads, KDE Plasma 6 widget, hardware doctor, no telemetry.">
+<meta name="author" content="Ramazan Yavuz">
+<meta name="keywords" content="hydra-llm, local llm, self-hosted ai, llama.cpp, gguf, ollama alternative, kde plasma widget, anonymous huggingface, ramazan yavuz">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://ra-yavuz.github.io/hydra-llm/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="hydra-llm - Run local LLMs the easy way">
+<meta property="og:description" content="One CLI to download, start, chat, and monitor local LLMs. KDE Plasma widget included. No telemetry, no API key, anonymous downloads.">
+<meta property="og:url" content="https://ra-yavuz.github.io/hydra-llm/">
+<meta property="og:site_name" content="ra-yavuz">
+<meta name="twitter:card" content="summary">
+<style>
+  :root {
+    --fg: #1a1a1a; --muted: #5e5e5e; --bg: #f4f1ec; --card: #ffffff;
+    --line: #d8d4cc; --code-bg: #ebe7e0; --link: #0a4ca8;
+    --apt-bg: #eef2f8; --warn-bg: #fff7d6; --warn-fg: #5a4500; --warn-line: #e8d36b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #ececec; --muted: #9a9a9a; --bg: #1c1d20; --card: #25272b;
+      --line: #353941; --code-bg: #14151a; --link: #7cb0ff;
+      --apt-bg: #1f242d; --warn-bg: #3a2e00; --warn-fg: #f6e2a4; --warn-line: #6a5500;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         color: var(--fg); background: var(--bg); line-height: 1.55; }
+  main { max-width: 780px; margin: 0 auto; padding: 48px 24px 96px; }
+  .crumb { font-size: 0.86rem; color: var(--muted); margin: 0 0 18px; }
+  .crumb a { color: var(--muted); }
+  h1 { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.005em; }
+  p.tag { color: var(--muted); margin: 0 0 18px; font-size: 1rem; max-width: 60ch; }
+  h2 { font-size: 1.15rem; margin: 36px 0 8px; }
+  h3 { font-size: 1rem; margin: 24px 0 6px; }
+  a { color: var(--link); }
+  pre { background: var(--code-bg); padding: 14px; border-radius: 8px; overflow-x: auto; font-size: 0.92rem; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  pre code { padding: 0; background: transparent; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .apt { background: var(--apt-bg); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 18px 0; }
+  .warn { background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-line); border-radius: 10px; padding: 16px; margin: 18px 0; font-size: 0.95rem; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 0.95rem; }
+  th { background: var(--code-bg); }
+  ul.tight li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<main>
+
+<p class="crumb"><a href="https://ra-yavuz.github.io/">ra-yavuz</a> / hydra-llm</p>
+
+<h1>hydra-llm</h1>
+<p class="tag">Run local LLMs the easy way. Pick a model, download it, chat with it. No cloud, no API key, no telemetry.</p>
+
+<div class="warn">
+  <strong>No warranty.</strong> hydra-llm runs LLMs on your machine, manages Docker containers, downloads multi-gigabyte model files from third-party hosts, and exposes HTTP APIs on local ports. It is provided <strong>as is, without warranty of any kind.</strong> The author is not liable for any damage to hardware, data, or system, or for the content of model output. LLM outputs are unreliable and must not be used for safety-critical decisions. By installing or running this software you accept these terms. Read the full disclaimer in the
+  <a href="https://github.com/ra-yavuz/hydra-llm/blob/main/README.md">README</a>.
+</div>
+
+<h2>Install</h2>
+
+<div class="apt">
+<strong>One-liner.</strong> Installs the CLI into <code>~/.local/bin</code>, builds the engine image, downloads a starter model, runs a smoke test.
+<pre><code>curl -fsSL https://raw.githubusercontent.com/ra-yavuz/hydra-llm/main/get.sh | bash</code></pre>
+Do not run with <code>sudo</code>. The installer asks for sudo only for missing system packages (Docker, python3-yaml).
+</div>
+
+<div class="card">
+<strong>Or via apt</strong> (Debian/Ubuntu, once the apt repo card is published):
+<pre><code>echo "deb [trusted=yes] https://ra-yavuz.github.io/apt stable main" | \
+  sudo tee /etc/apt/sources.list.d/ra-yavuz.list
+sudo apt update
+sudo apt install hydra-llm hydra-llm-plasma   # plasma is optional</code></pre>
+</div>
+
+<h2>Quick start</h2>
+
+<pre><code>hydra-llm doctor          # detect your hardware
+hydra-llm setup           # build engine image + starter model
+hydra-llm list-online     # browse the catalog (filtered to your hardware)
+hydra-llm download llama-3.1-8b
+hydra-llm chat llama-3.1-8b</code></pre>
+
+<h2>Hardware tiers</h2>
+<table>
+  <thead><tr><th>Tier</th><th>Spec example</th><th>Recommended models</th></tr></thead>
+  <tbody>
+    <tr><td><code>tiny</code></td><td>4-8 GB RAM, no dGPU</td><td>SmolLM2, Phi-3.5-mini, Gemma-2-2B</td></tr>
+    <tr><td><code>laptop</code></td><td>16-32 GB RAM, integrated GPU</td><td>Llama-3.1-8B Q4, Mistral-7B Q4</td></tr>
+    <tr><td><code>halo</code></td><td>64-128 GB unified, AMD Strix iGPU</td><td>Gemma-2-27B Q4, Qwen-2.5-32B Q4</td></tr>
+    <tr><td><code>workstation</code></td><td>24+ GB dGPU</td><td>Llama-3.3-70B Q4</td></tr>
+    <tr><td><code>server</code></td><td>multi-GPU or 64+ GB system RAM</td><td>Llama-3.3-70B Q5, MoEs</td></tr>
+  </tbody>
+</table>
+<p><code>hydra-llm doctor</code> classifies your machine automatically.</p>
+
+<h2>What you get</h2>
+<ul class="tight">
+  <li>Single CLI: <code>hydra-llm</code> with subcommands like <code>setup</code>, <code>chat</code>, <code>start</code>, <code>stop</code>, <code>list-online</code>, <code>download</code>, <code>doctor</code>, <code>uninstall</code>, <code>wipe</code>.</li>
+  <li>Curated catalog of community-quantized GGUFs that download anonymously.</li>
+  <li>Two engine images (Vulkan, CPU) built locally on first <code>setup</code>; auto-fallback if the preferred image fails.</li>
+  <li>Persona files: drop a markdown file with optional YAML front matter into <code>~/.config/hydra-llm/personas/</code> and <code>--persona &lt;name&gt;</code> picks it up.</li>
+  <li>Persistent chat sessions in <code>~/.local/state/hydra-llm/sessions/</code>; resume with <code>--session &lt;name&gt;</code>.</li>
+  <li>OpenAI-compatible HTTP API exposed by every running model. <code>hydra-llm api &lt;id&gt;</code> prints a copy-paste curl command.</li>
+  <li>Optional KDE Plasma 6 widget (<code>hydra-llm-plasma</code>) with a HAL-eye animated indicator and inline log console.</li>
+</ul>
+
+<h2>Privacy</h2>
+<ul class="tight">
+  <li>No telemetry, no analytics, no auto-update calls.</li>
+  <li>All inference runs locally in Docker.</li>
+  <li>Chat sessions stay on your disk; the CLI never uploads them.</li>
+  <li>Model downloads work without a Hugging Face account. <code>HF_TOKEN</code> is supported but never required.</li>
+</ul>
+
+<h2>Source</h2>
+<ul class="tight">
+  <li>Code: <a href="https://github.com/ra-yavuz/hydra-llm">github.com/ra-yavuz/hydra-llm</a></li>
+  <li>Releases: <a href="https://github.com/ra-yavuz/hydra-llm/releases">github.com/ra-yavuz/hydra-llm/releases</a></li>
+  <li>Other ra-yavuz projects: <a href="https://ra-yavuz.github.io/">ra-yavuz.github.io</a></li>
+</ul>
+
+<p style="margin-top: 60px; font-size: 0.85rem; color: var(--muted);">
+  &copy; 2026 Ramazan Yavuz. MIT-licensed. No warranty.
+</p>
+
+</main>
+</body>
+</html>

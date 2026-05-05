@@ -1,0 +1,24 @@
+# llama.cpp built for CPU only (BLAS via OpenBLAS). Slower but works on any
+# machine without GPU drivers.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git ca-certificates curl libopenblas-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG LLAMA_CPP_REF=master
+WORKDIR /src
+RUN git clone --depth 1 --branch "$LLAMA_CPP_REF" https://github.com/ggerganov/llama.cpp.git . \
+ && cmake -B build -DGGML_OPENBLAS=1 -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build --config Release -j "$(nproc)" \
+ && mkdir -p /opt/llama \
+ && cp -r build/bin/. /opt/llama/ \
+ && rm -rf /src
+
+ENV PATH=/opt/llama:/usr/local/bin:$PATH \
+    LD_LIBRARY_PATH=/opt/llama
+EXPOSE 8081
+ENTRYPOINT ["llama-server"]
+CMD ["--help"]

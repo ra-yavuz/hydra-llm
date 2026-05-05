@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	$(MAKE) -C $(CURDIR) install DESTDIR=$(CURDIR)/debian/hydra-llm PREFIX=/usr
+	# Plasmoid goes to its own subpackage: install only into hydra-llm-plasma.
+	install -d $(CURDIR)/debian/hydra-llm-plasma/usr/share/plasma/plasmoids/com.github.ra-yavuz.hydra-llm
+	cp -r $(CURDIR)/plasmoid/metadata.json \
+	      $(CURDIR)/plasmoid/contents \
+	      $(CURDIR)/debian/hydra-llm-plasma/usr/share/plasma/plasmoids/com.github.ra-yavuz.hydra-llm/
+
+override_dh_auto_test:
+	# Skip; smoke test requires a running Docker daemon.
+	true

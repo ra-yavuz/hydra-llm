@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# hydra-llm: thin shell wrapper that execs the Python entry point.
+# Lives in /usr/bin/hydra-llm when packaged; the actual code is in
+# /usr/lib/hydra-llm/.
+set -euo pipefail
+
+if [ -n "${HYDRA_LLM_DEV:-}" ]; then
+    # Dev mode: run from source tree.
+    HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    LIB_DIR="$HERE/../lib"
+else
+    LIB_DIR="${HYDRA_LLM_LIB:-/usr/lib/hydra-llm}"
+fi
+
+exec python3 -B -c "import sys; sys.path.insert(0, '$LIB_DIR'); from hydra_llm.cli import main; main()" "$@"

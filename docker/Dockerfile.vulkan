@@ -1,0 +1,27 @@
+# llama.cpp built with Vulkan, suitable for AMD/Intel/NVIDIA via the Vulkan
+# driver shipped on the host. The container only needs /dev/dri passed in.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git \
+    libvulkan-dev spirv-headers vulkan-tools mesa-vulkan-drivers glslc \
+    ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG LLAMA_CPP_REF=master
+WORKDIR /src
+RUN git clone --depth 1 --branch "$LLAMA_CPP_REF" https://github.com/ggerganov/llama.cpp.git . \
+ && cmake -B build -DGGML_VULKAN=1 -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build --config Release -j "$(nproc)" \
+ && mkdir -p /opt/llama \
+ && cp -r build/bin/. /opt/llama/ \
+ && rm -rf /src
+
+ENV PATH=/opt/llama:/usr/local/bin:$PATH \
+    LD_LIBRARY_PATH=/opt/llama \
+    GGML_VULKAN=1
+EXPOSE 8081
+ENTRYPOINT ["llama-server"]
+CMD ["--help"]

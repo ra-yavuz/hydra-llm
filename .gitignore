@@ -1,0 +1,36 @@
+# Shell history accidentally written to the repo root
+.bash_history
+
+# Build artifacts
+dist/
+build/
+*.deb
+*.plasmoid
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local user data should never end up in the repo
+catalog/cache/
+state/
+*.gguf
+*.session.json
+.config/
+
+# Anything with secrets
+*.token
+*.key
+.env
+.env.*
+
+# Personal personas the user wrote (only the curated examples ship)
+personas/*.md
+!personas/friendly-tutor.md
+!personas/concise-coder.md

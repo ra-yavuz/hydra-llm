@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Ramazan Yavuz"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Manage local LLM model servers from the Plasma panel. Companion widget for hydra-llm.",
+        "Icon": "applications-science",
+        "Id": "com.github.ra-yavuz.hydra-llm",
+        "Name": "Hydra LLM",
+        "Version": "0.1.0",
+        "Website": "https://github.com/ra-yavuz/hydra-llm"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-NotificationArea": true
+}

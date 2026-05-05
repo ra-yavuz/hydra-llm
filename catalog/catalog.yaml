@@ -1,0 +1,187 @@
+# hydra-llm shipped catalog. All entries point to community-quantized GGUFs that
+# can be downloaded anonymously (no Hugging Face account or token required).
+#
+# Sizes are the actual content-length in GB rounded to two decimals.
+# Each entry's `recommended_for` lists the hardware tiers it is appropriate for
+# (see `hydra-llm doctor` for tier detection).
+#
+# Field reference:
+#   id              short alias used on the CLI
+#   name            human-readable label
+#   filename        local filename to save as (under models_dir)
+#   url             direct download URL
+#   sha256          optional, verified after download
+#   size_gb         file size in gigabytes
+#   needs_ram_gb    minimum system RAM (model + working set + OS)
+#   fits_in_vram_gb if your GPU has at least this much VRAM, weights fit fully
+#   default_port    preferred host port when started
+#   gpu_layers      number of layers to offload (99 = all)
+#   recommended_for hardware tiers this model is suitable for
+#   license         informational; consult the model card for actual terms
+#   tags            free-form, used by future filters
+#   notes           short context for the user
+
+models:
+
+  # --- starter / sanity-check tier ---
+  # Used by `hydra-llm setup` as the first-run smoke test. ~100 MB, downloads
+  # in seconds, boots in seconds. The output quality is poor (it's a 135M-param
+  # toy), but the goal is to prove the install works end to end. Don't use it
+  # for real chat.
+  - id: smollm2-135m
+    name: "SmolLM2 135M Instruct (Q4_K_M)"
+    filename: SmolLM2-135M-Instruct-Q4_K_M.gguf
+    url: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf
+    size_gb: 0.10
+    needs_ram_gb: 1
+    fits_in_vram_gb: 1
+    default_port: 18079
+    gpu_layers: 99
+    recommended_for: [tiny, laptop]
+    license: Apache-2.0
+    tags: [smoke-test, smallest]
+    notes: "Throwaway smoke-test model. Output is poor by design; use a bigger model for real work."
+
+  # --- tiny tier ---
+  - id: smollm2-360m
+    name: "SmolLM2 360M Instruct (Q4_K_M)"
+    filename: SmolLM2-360M-Instruct-Q4_K_M.gguf
+    url: https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf
+    size_gb: 0.26
+    needs_ram_gb: 2
+    fits_in_vram_gb: 1
+    default_port: 18080
+    gpu_layers: 99
+    recommended_for: [tiny, laptop]
+    license: Apache-2.0
+    tags: [tiny, chat]
+    notes: "Tiny chat model. Surprisingly coherent for the size."
+
+  - id: qwen2.5-0.5b
+    name: "Qwen2.5 0.5B Instruct (Q4_K_M)"
+    filename: Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+    url: https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+    size_gb: 0.38
+    needs_ram_gb: 2
+    fits_in_vram_gb: 1
+    default_port: 18081
+    gpu_layers: 99
+    recommended_for: [tiny, laptop]
+    license: Apache-2.0
+    tags: [tiny, multilingual, code]
+    notes: "Small but strong multilingual + light code reasoning."
+
+  - id: gemma-2-2b
+    name: "Gemma 2 2B Instruct (Q4_K_M)"
+    filename: gemma-2-2b-it-Q4_K_M.gguf
+    url: https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf
+    size_gb: 1.59
+    needs_ram_gb: 4
+    fits_in_vram_gb: 3
+    default_port: 18081
+    gpu_layers: 99
+    recommended_for: [tiny, laptop]
+    license: Gemma
+    tags: [small, instruct]
+    notes: "Strong quality for its size. Reads model-card terms before commercial use."
+
+  - id: phi-3.5-mini
+    name: "Phi-3.5 mini Instruct (Q4_K_M)"
+    filename: Phi-3.5-mini-instruct.Q4_K_M.gguf
+    url: https://huggingface.co/QuantFactory/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct.Q4_K_M.gguf
+    size_gb: 2.23
+    needs_ram_gb: 6
+    fits_in_vram_gb: 4
+    default_port: 18082
+    gpu_layers: 99
+    recommended_for: [tiny, laptop]
+    license: MIT
+    tags: [small, instruct, reasoning]
+    notes: "Microsoft's compact model with surprising reasoning quality."
+
+  # --- laptop / mid tier ---
+  - id: mistral-7b
+    name: "Mistral 7B Instruct v0.3 (Q4_K_M)"
+    filename: Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
+    url: https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
+    size_gb: 4.07
+    needs_ram_gb: 8
+    fits_in_vram_gb: 6
+    default_port: 18083
+    gpu_layers: 99
+    recommended_for: [laptop, mid, halo]
+    license: Apache-2.0
+    tags: [instruct, general]
+    notes: "Reliable general-purpose 7B."
+
+  - id: qwen2.5-7b
+    name: "Qwen2.5 7B Instruct (Q4_K_M)"
+    filename: Qwen2.5-7B-Instruct-Q4_K_M.gguf
+    url: https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+    size_gb: 4.36
+    needs_ram_gb: 8
+    fits_in_vram_gb: 6
+    default_port: 18084
+    gpu_layers: 99
+    recommended_for: [laptop, mid, halo]
+    license: Apache-2.0
+    tags: [instruct, multilingual, code]
+    notes: "Strong multilingual and code performance."
+
+  - id: llama-3.1-8b
+    name: "Llama 3.1 8B Instruct (Q4_K_M)"
+    filename: Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf
+    url: https://huggingface.co/QuantFactory/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf
+    size_gb: 4.58
+    needs_ram_gb: 10
+    fits_in_vram_gb: 7
+    default_port: 18085
+    gpu_layers: 99
+    recommended_for: [laptop, mid, halo]
+    license: Llama-3.1
+    tags: [instruct, popular]
+    notes: "Reference 8B for most use cases. Read the Llama license."
+
+  # --- halo / mid-large tier ---
+  - id: gemma-2-27b
+    name: "Gemma 2 27B Instruct (Q4_K_M)"
+    filename: gemma-2-27b-it-Q4_K_M.gguf
+    url: https://huggingface.co/bartowski/gemma-2-27b-it-GGUF/resolve/main/gemma-2-27b-it-Q4_K_M.gguf
+    size_gb: 15.50
+    needs_ram_gb: 24
+    fits_in_vram_gb: 18
+    default_port: 18086
+    gpu_layers: 99
+    recommended_for: [halo, workstation, server]
+    license: Gemma
+    tags: [large, instruct]
+    notes: "Excellent quality. On Strix Halo iGPUs, weights spill into system RAM via GTT."
+
+  - id: qwen2.5-32b
+    name: "Qwen2.5 32B Instruct (Q4_K_M)"
+    filename: Qwen2.5-32B-Instruct-Q4_K_M.gguf
+    url: https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q4_K_M.gguf
+    size_gb: 18.49
+    needs_ram_gb: 28
+    fits_in_vram_gb: 22
+    default_port: 18087
+    gpu_layers: 99
+    recommended_for: [halo, workstation, server]
+    license: Apache-2.0
+    tags: [large, instruct, code]
+    notes: "Top-tier 32B, particularly strong at code."
+
+  # --- workstation / server tier ---
+  - id: llama-3.3-70b
+    name: "Llama 3.3 70B Instruct (Q4_K_M)"
+    filename: Llama-3.3-70B-Instruct.Q4_K_M.gguf
+    url: https://huggingface.co/mradermacher/Llama-3.3-70B-Instruct-GGUF/resolve/main/Llama-3.3-70B-Instruct.Q4_K_M.gguf
+    size_gb: 39.60
+    needs_ram_gb: 56
+    fits_in_vram_gb: 44
+    default_port: 18088
+    gpu_layers: 99
+    recommended_for: [workstation, server, halo]
+    license: Llama-3.3
+    tags: [flagship, instruct]
+    notes: "Flagship instruct model. Halo Strix can run it via GTT spill."

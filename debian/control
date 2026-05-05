@@ -1,0 +1,66 @@
+Source: hydra-llm
+Section: utils
+Priority: optional
+Maintainer: Ramazan Yavuz <yavuzramazan1994@gmail.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/ra-yavuz/hydra-llm
+Vcs-Git: https://github.com/ra-yavuz/hydra-llm.git
+Vcs-Browser: https://github.com/ra-yavuz/hydra-llm
+Rules-Requires-Root: no
+
+Package: hydra-llm
+Architecture: all
+Depends: ${misc:Depends},
+         python3 (>= 3.10),
+         python3-yaml,
+         docker.io | docker-ce | podman-docker,
+         bash (>= 4.0),
+         curl,
+         git
+Recommends: vulkan-tools, mesa-vulkan-drivers
+Suggests: hydra-llm-plasma
+Description: run local LLMs the easy way (CLI)
+ hydra-llm is a single-command interface for running large language models
+ locally with llama.cpp, packaged in Docker. It includes a curated catalog
+ of community-quantized GGUFs that download anonymously, a hardware doctor
+ that recommends models per system tier, persona files for repeatable chat
+ personalities, persistent chat sessions, and a JSON status API used by the
+ companion Plasma widget.
+ .
+ Quick start:
+   hydra-llm setup                 # build engine image, fetch starter model
+   hydra-llm chat smollm2-135m     # interactive chat
+   hydra-llm list-online           # browse the catalog
+   hydra-llm doctor                # detect your hardware tier
+ .
+ Privacy: no telemetry, no auto-update calls, no model traffic outside the
+ download itself. Chat sessions stay in ~/.local/state/hydra-llm/.
+ .
+ DISCLAIMER: This software runs LLMs on your machine, manages Docker
+ containers, downloads multi-gigabyte model files from third-party hosts,
+ and exposes HTTP APIs on local ports. It is provided AS IS, WITHOUT
+ WARRANTY OF ANY KIND. The author is not liable for any damage to hardware,
+ data, or system, or for the content of model output. LLM outputs are
+ unreliable; do not use them for safety-critical decisions. See
+ /usr/share/doc/hydra-llm/README.md for the full disclaimer.
+
+Package: hydra-llm-plasma
+Architecture: all
+Depends: ${misc:Depends},
+         hydra-llm (>= ${binary:Version}),
+         plasma-workspace (>= 6.0),
+         qml6-module-qtquick-controls,
+         qml6-module-org-kde-kirigami,
+         qml6-module-org-kde-plasma-components
+Description: KDE Plasma 6 panel widget for hydra-llm
+ A panel widget that lets you start, stop, and chat with local LLM model
+ servers managed by hydra-llm. Features:
+ .
+   - HAL 9000 inspired animated indicator (breath rate follows system load)
+   - Per-model start/stop/chat/logs buttons
+   - Live CPU, RAM, GPU, VRAM dots in the popup
+   - Inline log console for the running container
+   - Spawns a real terminal emulator for interactive chat
+ .
+ Requires the hydra-llm CLI to be installed.
