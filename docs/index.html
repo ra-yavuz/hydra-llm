@@ -39,8 +39,15 @@
   main { max-width: 780px; margin: 0 auto; padding: 48px 24px 96px; }
   .crumb { font-size: 0.86rem; color: var(--muted); margin: 0 0 18px; }
   .crumb a { color: var(--muted); }
-  .logo { width: 132px; height: 132px; display: block; margin: 0 0 14px; }
-  @media (prefers-color-scheme: dark) { .logo { filter: invert(1); } }
+  .brand {
+    position: fixed; top: 20px; right: 24px;
+    width: 110px; height: 110px;
+    object-fit: contain; object-position: top right;
+    pointer-events: none; z-index: 10;
+  }
+  @media (prefers-color-scheme: dark) { .brand { filter: invert(1); } }
+  @media (max-width: 720px) { .brand { width: 76px; height: 76px; top: 12px; right: 12px; } }
+  @media (max-width: 480px) { .brand { display: none; } }
   h1 { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.005em; }
   p.tag { color: var(--muted); margin: 0 0 18px; font-size: 1rem; max-width: 60ch; }
   h2 { font-size: 1.15rem; margin: 36px 0 8px; }
@@ -63,7 +70,7 @@
 
 <p class="crumb"><a href="https://ra-yavuz.github.io/">ra-yavuz</a> / hydra-llm</p>
 
-<img class="logo" src="logo-icon.png" alt="hydra-llm logo: a three-headed hydra between angle brackets" width="132" height="132">
+<img class="brand" src="logo.png" alt="hydra-llm logo: a three-headed hydra between angle brackets">
 <h1>hydra-llm</h1>
 <p class="tag">Run local LLMs the easy way. Pick a model, download it, chat with it. No cloud, no API key, no telemetry.</p>
 
