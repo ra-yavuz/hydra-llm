@@ -1,3 +1,13 @@
+hydra-llm (0.1.1-1) unstable; urgency=low
+
+  * user-uninstall: refresh plasmashell after removing the user-mode
+    Plasma widget so the tray icon clears immediately. No-op outside
+    interactive Plasma sessions.
+  * docs: README and project page now have an Uninstall section
+    covering both the apt and one-liner install paths.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.0-1) unstable; urgency=low
 
   * Initial release.

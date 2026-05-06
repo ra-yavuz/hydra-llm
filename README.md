@@ -115,6 +115,19 @@ The shipped catalog only references community-quantized GGUFs (Bartowski, lmstud
 
 The installer detects your desktop and offers the right native UI when one exists. On Plasma 6, the widget is installed automatically. On every other desktop the CLI works fully today; native UIs for GNOME, XFCE, and others are on the roadmap. See [INTEGRATIONS.md](INTEGRATIONS.md).
 
+## Uninstall
+
+```sh
+# .deb install:
+sudo apt remove hydra-llm hydra-llm-plasma   # add --purge to also drop config
+
+# user-mode install (the curl/bash one-liner):
+hydra-llm uninstall                           # keeps configs and downloaded models
+hydra-llm wipe                                # also deletes models, sessions, engine image
+```
+
+Both paths take care of stopping running model containers and removing the Plasma widget files. If you had the widget on your KDE panel, the user-mode uninstaller restarts `plasmashell` for you so the tray icon clears immediately. After `apt remove hydra-llm-plasma`, log out and back in (or run `kquitapp6 plasmashell && kstart plasmashell`) to refresh the panel.
+
 ## Documentation
 
 - [Project page](https://ra-yavuz.github.io/hydra-llm/)

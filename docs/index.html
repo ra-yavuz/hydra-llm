@@ -135,6 +135,14 @@ hydra-llm chat llama-3.1-8b</code></pre>
   <li>Model downloads work without a Hugging Face account. <code>HF_TOKEN</code> is supported but never required.</li>
 </ul>
 
+<h2>Uninstall</h2>
+<p>If you installed via apt:</p>
+<pre><code>sudo apt remove hydra-llm hydra-llm-plasma   # add --purge to also drop config</code></pre>
+<p>If you installed with the one-liner (user mode, lives under <code>~/.local</code>):</p>
+<pre><code>hydra-llm uninstall   # keeps configs and downloaded models
+hydra-llm wipe        # also deletes models, sessions, engine image</code></pre>
+<p>Both paths stop running model containers and remove the Plasma widget files. The user-mode uninstaller also refreshes <code>plasmashell</code> so the tray icon clears immediately. After <code>apt remove hydra-llm-plasma</code>, log out and back in (or run <code>kquitapp6 plasmashell &amp;&amp; kstart plasmashell</code>) to refresh the panel.</p>
+
 <h2>Source</h2>
 <ul class="tight">
   <li>Code: <a href="https://github.com/ra-yavuz/hydra-llm">github.com/ra-yavuz/hydra-llm</a></li>

@@ -37,9 +37,27 @@ rm -rf "$USER_SHARE"
 
 # 3a. Plasmoid copy installed by user-install.sh, if present.
 PLASMOID_USER_DIR="$HOME/.local/share/plasma/plasmoids/com.github.ra-yavuz.hydra-llm"
+PLASMOID_REMOVED=0
 if [ -d "$PLASMOID_USER_DIR" ]; then
     rm -rf "$PLASMOID_USER_DIR"
+    PLASMOID_REMOVED=1
     echo "Removed Plasmoid: $PLASMOID_USER_DIR"
+fi
+
+# 3b. If we removed the plasmoid and we're in a live Plasma session, refresh
+# the panel so the tray icon disappears immediately. Skipped on servers, in
+# non-Plasma sessions, and when stdin is not a tty (e.g. CI, scripted installs).
+if [ "$PLASMOID_REMOVED" = "1" ] && [ -t 0 ] \
+   && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] \
+   && pgrep -x plasmashell >/dev/null 2>&1; then
+    if command -v kquitapp6 >/dev/null 2>&1 && command -v kstart >/dev/null 2>&1; then
+        echo "Refreshing Plasma panel (kquitapp6 plasmashell && kstart plasmashell)"
+        kquitapp6 plasmashell >/dev/null 2>&1 || true
+        # kstart returns once the app is launched; detach so this script exits.
+        setsid kstart plasmashell >/dev/null 2>&1 < /dev/null &
+    else
+        echo "Note: log out and back in (or restart plasmashell) to clear the tray icon."
+    fi
 fi
 
 # 3. Wipe-only: also delete user data and the built Docker image.
