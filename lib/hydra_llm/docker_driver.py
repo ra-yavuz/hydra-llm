@@ -3,6 +3,7 @@ import json
 import re
 import shutil
 import subprocess
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -84,6 +85,65 @@ def annotate_health(rows):
     for r, ok in zip(rows, results):
         r["ready"] = ok
     return rows
+
+
+def _container_state(name):
+    """Return the docker State.Status of `name`, or None if it doesn't exist."""
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Status}}", name],
+            capture_output=True, text=True, timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip() or None
+
+
+def container_logs_tail(name, n=10):
+    """Return the last n lines of combined stdout/stderr for the container.
+    Empty string if logs aren't available."""
+    try:
+        r = subprocess.run(
+            ["docker", "logs", "--tail", str(n), name],
+            capture_output=True, text=True, timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return ""
+    if r.returncode != 0:
+        return ""
+    return (r.stdout + r.stderr).rstrip()
+
+
+def wait_for_ready(name, port, timeout=60.0, on_tick=None):
+    """Poll the container's /health until ready, exited, or timeout.
+
+    Returns a dict:
+      {"state": "ready"|"exited"|"loading", "elapsed": float, "logs": str}
+
+    `on_tick(elapsed)` is called once per poll loop iteration if provided,
+    so the CLI can print progress dots without us depending on stdout here.
+    """
+    deadline = time.monotonic() + timeout
+    start = time.monotonic()
+    while True:
+        elapsed = time.monotonic() - start
+        if on_tick:
+            try: on_tick(elapsed)
+            except Exception: pass
+        # Container died?
+        state = _container_state(name)
+        if state in ("exited", "dead"):
+            return {"state": "exited", "elapsed": elapsed,
+                    "logs": container_logs_tail(name, 20)}
+        # /health says ok?
+        if probe_health(port, timeout=0.4):
+            return {"state": "ready", "elapsed": elapsed, "logs": ""}
+        if time.monotonic() >= deadline:
+            return {"state": "loading", "elapsed": elapsed,
+                    "logs": container_logs_tail(name, 5)}
+        time.sleep(0.5)
 
 
 def find_free_port(used_ports, low, high):

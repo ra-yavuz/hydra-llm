@@ -100,8 +100,13 @@ def main():
 
     p = sub.add_parser("start", help="start a model server", parents=[json_parent])
     p.add_argument("alias", nargs="?",
-                   help="catalog id; optional if exactly one model is downloaded")
+                   help="catalog id, GGUF filename, or index from `status`/`list`. "
+                        "Optional if exactly one model is downloaded.")
     p.add_argument("--port", type=int)
+    p.add_argument("--no-wait", action="store_true",
+                   help="skip the post-start /health poll and return immediately")
+    p.add_argument("--wait-timeout", type=float, default=60.0,
+                   help="seconds to wait for /health to return ok (default 60)")
     p.set_defaults(func=cmd_start)
 
     p = sub.add_parser("stop", help="stop a model server")
@@ -274,16 +279,26 @@ def cmd_status(args):
             print(f"error: {err}", file=sys.stderr)
         return 1
     docker_driver.annotate_health(rows)
+    # Index from the same enumerator used by start/stop/chat, so the # printed
+    # here is exactly what you can pass back as `hydra-llm start <#>`.
+    ordered = _enumerated_aliases(cfg)
+    index_by_alias = {a: i + 1 for i, a in enumerate(ordered)}
+    rows.sort(key=lambda r: r["alias"])
     if args.json:
+        for r in rows:
+            r["index"] = index_by_alias.get(r["alias"])
         print(json.dumps({"ok": True, "running": rows}, indent=2))
         return 0
     if not rows:
         print("No model servers running.")
         return 0
-    print(f"{'ALIAS':<24} {'PORT':<6} {'READY':<6} STATUS")
+    print(f"{'#':<3} {'ALIAS':<32} {'PORT':<6} {'READY':<6} STATUS")
     for r in rows:
         ready = "yes" if r.get("ready") else "no"
-        print(f"{r['alias']:<24} {r['port'] or '?':<6} {ready:<6} {r['status']}")
+        idx = index_by_alias.get(r["alias"], "?")
+        print(f"{idx:<3} {r['alias']:<32} {r['port'] or '?':<6} {ready:<6} {r['status']}")
+    print()
+    print("Tip: `hydra-llm start <#>` and `stop <#>` accept these index numbers.")
     return 0
 
 
@@ -308,17 +323,24 @@ def cmd_list(args):
             "fit": fits,
             "fit_why": why,
         })
+    ordered = _enumerated_aliases(cfg)
+    index_by_alias = {a: i + 1 for i, a in enumerate(ordered)}
+    for r in out_rows:
+        r["index"] = index_by_alias.get(r["id"])  # only downloaded entries get a #
     if args.json:
         print(json.dumps({"ok": True, "models": out_rows}, indent=2))
         return 0
     if not out_rows:
         print("Catalog is empty. Set HYDRA_LLM_CATALOG or install hydra-llm package.")
         return 1
-    print(f"{'ID':<22} {'SIZE':<7} {'DOWNL':<7} {'RUN':<5} {'FIT':<6} NAME")
+    print(f"{'#':<3} {'ID':<22} {'SIZE':<7} {'DOWNL':<7} {'RUN':<5} {'FIT':<6} NAME")
     for r in out_rows:
         size = f"{r['size_gb']} GB" if r['size_gb'] else "-"
-        print(f"{r['id']:<22} {size:<7} {'yes' if r['downloaded'] else 'no':<7} "
+        idx = r["index"] if r["index"] is not None else "-"
+        print(f"{idx:<3} {r['id']:<22} {size:<7} {'yes' if r['downloaded'] else 'no':<7} "
               f"{'yes' if r['running'] else 'no':<5} {r['fit']:<6} {r['name']}")
+    print()
+    print("Tip: `hydra-llm start <#>` and `stop <#>` accept the index numbers above.")
     return 0
 
 
@@ -385,6 +407,48 @@ def _resolve_catalog(alias):
         if fn.endswith(".gguf") and fn[:-len(".gguf")] == alias:
             return m
     return None
+
+
+def _enumerated_aliases(cfg=None):
+    """Stable, alphabetically-sorted list of aliases the user can refer to by
+    index. Includes any container we manage (running or exited) and every
+    downloaded catalog entry, deduplicated. The order is fixed by sorted alias
+    so `1` keeps meaning the same thing across consecutive commands."""
+    if cfg is None:
+        cfg = cfg_mod.load_user_config()
+    aliases = set()
+    rows, _ = docker_driver.list_running(cfg)
+    for r in rows:
+        aliases.add(r["alias"])
+    catalog, _ = cfg_mod.load_catalog()
+    for m in catalog:
+        if downloader.is_downloaded(m, cfg):
+            aliases.add(m["id"])
+    return sorted(aliases)
+
+
+def _resolve_alias_or_index(arg, cfg=None):
+    """Turn a user-supplied positional into a concrete alias.
+
+    Resolution order:
+      1. catalog id / filename / filename-without-.gguf (delegates to _resolve_catalog).
+      2. small positive integer -> 1-based index into _enumerated_aliases().
+
+    Returns (alias, error_message). On success, error_message is None.
+    """
+    if not arg:
+        return None, "no alias given"
+    entry = _resolve_catalog(arg)
+    if entry:
+        return entry["id"], None
+    if arg.isdigit():
+        idx = int(arg)
+        ordered = _enumerated_aliases(cfg)
+        if 1 <= idx <= len(ordered):
+            return ordered[idx - 1], None
+        return None, (f"index {idx} out of range; "
+                      f"have {len(ordered)} entries (run `hydra-llm status` to see them)")
+    return None, f"unknown alias: {arg}"
 
 
 def _slug_from_filename(stem: str) -> str:
@@ -587,9 +651,13 @@ def cmd_remove(args):
 def cmd_start(args):
     cfg = cfg_mod.load_user_config()
     if args.alias:
-        entry = _resolve_catalog(args.alias)
+        alias, err = _resolve_alias_or_index(args.alias, cfg)
+        if err:
+            print(f"error: {err}", file=sys.stderr)
+            return 1
+        entry = _resolve_catalog(alias)
         if not entry:
-            print(f"error: unknown catalog id: {args.alias}", file=sys.stderr)
+            print(f"error: unknown catalog id: {alias}", file=sys.stderr)
             return 1
         if not downloader.is_downloaded(entry, cfg):
             print(f"error: {entry['id']} is not downloaded yet. Run: hydra-llm download {entry['id']}",
@@ -613,15 +681,65 @@ def cmd_start(args):
     if not ok:
         print(f"error: {info.get('error')}", file=sys.stderr)
         return 1
-    if args.json:
-        print(json.dumps({"ok": True, **info}))
-    else:
-        if info.get("already_running"):
+
+    already = info.get("already_running", False)
+    if not args.json:
+        if already:
             print(f"{info['container']} is already running.")
         else:
             print(f"started {info['container']}  port {info['port']}  image {info['image']}")
-            print(f"check:   curl -s http://localhost:{info['port']}/health")
-    return 0
+
+    # Poll /health unless told not to. Skip the wait when we didn't actually
+    # start anything new; the existing container's readiness is whatever it is.
+    health = None
+    if not args.no_wait and not already:
+        if not args.json:
+            sys.stdout.write("waiting for /health ")
+            sys.stdout.flush()
+        last_dot = [0.0]
+        def tick(elapsed):
+            if args.json:
+                return
+            # one dot every ~0.5s; the poll loop sleeps 0.5s so this is roughly 1:1.
+            if elapsed - last_dot[0] >= 0.5:
+                sys.stdout.write("."); sys.stdout.flush()
+                last_dot[0] = elapsed
+        health = docker_driver.wait_for_ready(
+            info["container"], info["port"],
+            timeout=args.wait_timeout, on_tick=tick,
+        )
+        if not args.json:
+            print()  # close the dots line
+
+    if args.json:
+        out = {"ok": True, **info}
+        if health is not None:
+            out["health"] = health
+        print(json.dumps(out))
+        return 0 if (health is None or health["state"] == "ready" or already) else 1
+
+    if health is None:
+        # --no-wait or already_running path
+        print(f"check:   curl -s http://localhost:{info['port']}/health")
+        return 0
+    if health["state"] == "ready":
+        print(f"ready in {health['elapsed']:.1f}s on port {info['port']}")
+        return 0
+    if health["state"] == "loading":
+        print(f"still loading after {health['elapsed']:.0f}s; the model may need more "
+              f"time. Check with: curl -s http://localhost:{info['port']}/health")
+        if health["logs"]:
+            print("recent logs:")
+            for line in health["logs"].splitlines():
+                print(f"  {line}")
+        return 0
+    # exited
+    print(f"container exited after {health['elapsed']:.1f}s.", file=sys.stderr)
+    if health["logs"]:
+        print("last logs:", file=sys.stderr)
+        for line in health["logs"].splitlines():
+            print(f"  {line}", file=sys.stderr)
+    return 1
 
 
 def cmd_autostart(args):
@@ -748,7 +866,13 @@ def cmd_reasoning(args):
 
 
 def cmd_stop(args):
-    ok, name = docker_driver.stop(args.alias)
+    cfg = cfg_mod.load_user_config()
+    alias, err = _resolve_alias_or_index(args.alias, cfg)
+    if err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    print(f"stopping {alias}...")
+    ok, name = docker_driver.stop(alias, cfg)
     if not ok:
         print(f"error: {name}", file=sys.stderr)
         return 1
@@ -771,10 +895,14 @@ def cmd_stop_all(args):
 
 def cmd_api(args):
     cfg = cfg_mod.load_user_config()
+    alias, err = _resolve_alias_or_index(args.alias, cfg)
+    if err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
     rows, _ = docker_driver.list_running(cfg)
-    match = next((r for r in rows if r["alias"] == args.alias), None)
+    match = next((r for r in rows if r["alias"] == alias), None)
     if not match:
-        print(f"error: {args.alias} is not running", file=sys.stderr)
+        print(f"error: {alias} is not running", file=sys.stderr)
         return 1
     port = match["port"]
     base = f"http://localhost:{port}"
@@ -791,9 +919,13 @@ def cmd_api(args):
 
 def cmd_chat(args):
     cfg = cfg_mod.load_user_config()
-    entry = _resolve_catalog(args.alias)
+    alias, err = _resolve_alias_or_index(args.alias, cfg)
+    if err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    entry = _resolve_catalog(alias)
     if not entry:
-        print(f"error: unknown catalog id: {args.alias}", file=sys.stderr)
+        print(f"error: unknown catalog id: {alias}", file=sys.stderr)
         return 1
 
     persona = None
@@ -805,10 +937,10 @@ def cmd_chat(args):
             return 1
 
     rows, _ = docker_driver.list_running(cfg)
-    match = next((r for r in rows if r["alias"] == args.alias), None)
+    match = next((r for r in rows if r["alias"] == alias), None)
     container_name = None
     if not match:
-        print(f"{args.alias} is not running. Starting it now.")
+        print(f"{alias} is not running. Starting it now.")
         ok, info = docker_driver.start_model(entry, cfg)
         if not ok:
             print(f"error: {info.get('error')}", file=sys.stderr)
@@ -828,7 +960,7 @@ def cmd_chat(args):
     chat_mod.interactive_chat(
         base_url=base_url,
         persona=persona,
-        alias=args.alias,
+        alias=alias,
         catalog_entry=entry,
         session_name=args.session,
         show_thoughts=show_thoughts,

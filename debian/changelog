@@ -1,3 +1,23 @@
+hydra-llm (0.1.10-1) unstable; urgency=low
+
+  * `hydra-llm start` now polls the new container's /health endpoint
+    and reports one of: `ready in <N>s` (with port for a quick curl),
+    `still loading after <N>s` (model still warming up; prints a
+    short tail of the container log so you see why), or `container
+    exited` (with the last 20 log lines on stderr) when the run
+    failed. Pass `--no-wait` to skip the poll, `--wait-timeout` to
+    change the 60s deadline. JSON output gains a `health` field.
+  * `hydra-llm stop` prints `stopping <alias>...` then `stopped <name>`.
+  * `status` and `list` printouts now include a leading `#` column,
+    indexed against a stable alphabetical sort over the union of
+    `status` rows and downloaded catalog entries. The number is
+    accepted by `start`, `stop`, `chat`, and `api` as a shortcut, so
+    `hydra-llm stop 1` and `hydra-llm start 1` work. Numeric
+    catalog ids still resolve as ids first, only falling back to
+    "row index" when no name matches.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.9-1) unstable; urgency=low
 
   * New `hydra-llm reasoning` subcommand controlling how a model's
