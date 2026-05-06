@@ -37,6 +37,10 @@ exec python3 -B -c "import sys; sys.path.insert(0, '$USER_LIB'); from hydra_llm.
 EOF
 chmod 0755 "$USER_BIN/hydra-llm"
 
+# Short alias for easier typing. Both names live in the same dir, so a relative
+# symlink is fine and survives renaming $USER_BIN.
+ln -sf hydra-llm "$USER_BIN/hydrallm"
+
 # DE-aware Plasmoid install. If Plasma 6 is the running desktop, copy the
 # widget package into ~/.local/share/plasma/plasmoids/ so it shows up in the
 # panel's "Add Widgets..." dialog. No sudo. Skipped when not on Plasma.

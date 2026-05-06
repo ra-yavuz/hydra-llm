@@ -1,3 +1,19 @@
+hydra-llm (0.1.5-1) unstable; urgency=low
+
+  * `hydra-llm start` no longer requires a model id when exactly one
+    model is downloaded; it auto-picks that one. With zero downloaded
+    it points to `hydra-llm list-online`/`download`; with more than
+    one it lists the candidate ids. Explicit `start <id>` is unchanged.
+  * New `hydrallm` command, a symlink to `hydra-llm`, for less typing.
+    Both names work everywhere; the .deb, user-install, and dev-install
+    paths all ship it.
+  * Fix: `hydra-llm start` no longer falsely reports "already running"
+    when a same-named container is sitting in `Exited` state. The check
+    now requires `State == running`; stale exited containers are
+    removed and recreated cleanly so the model actually comes back up.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.4-1) unstable; urgency=low
 
   * New `hydra-llm help [subcommand]` subcommand. Previously only

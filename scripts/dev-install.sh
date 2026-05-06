@@ -30,9 +30,13 @@ exec "$HERE/bin/hydra-llm" "\$@"
 EOF
 chmod 0755 "$USER_BIN/hydra-llm"
 
+# Short alias for easier typing.
+ln -sf hydra-llm "$USER_BIN/hydrallm"
+
 cat <<EOF
 Installed:
   $USER_BIN/hydra-llm         (launcher, points at $HERE)
+  $USER_BIN/hydrallm          (symlink to hydra-llm)
   $USER_LIB/hydra_llm         (symlink to lib/hydra_llm)
   $USER_SHARE/catalog.yaml    (symlink to shipped catalog)
   $USER_SHARE/personas/       (symlinks to shipped personas)

@@ -30,8 +30,8 @@ if command -v docker >/dev/null 2>&1; then
     fi
 fi
 
-# 2. Remove the launcher and library.
-rm -f "$USER_BIN/hydra-llm"
+# 2. Remove the launcher (and the 'hydrallm' alias) and library.
+rm -f "$USER_BIN/hydra-llm" "$USER_BIN/hydrallm"
 rm -rf "$USER_LIB"
 rm -rf "$USER_SHARE"
 

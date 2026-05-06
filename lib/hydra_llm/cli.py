@@ -98,7 +98,8 @@ def main():
     p.set_defaults(func=cmd_remove)
 
     p = sub.add_parser("start", help="start a model server", parents=[json_parent])
-    p.add_argument("alias")
+    p.add_argument("alias", nargs="?",
+                   help="catalog id; optional if exactly one model is downloaded")
     p.add_argument("--port", type=int)
     p.set_defaults(func=cmd_start)
 
@@ -523,14 +524,29 @@ def cmd_remove(args):
 
 def cmd_start(args):
     cfg = cfg_mod.load_user_config()
-    entry = _resolve_catalog(args.alias)
-    if not entry:
-        print(f"error: unknown catalog id: {args.alias}", file=sys.stderr)
-        return 1
-    if not downloader.is_downloaded(entry, cfg):
-        print(f"error: {entry['id']} is not downloaded yet. Run: hydra-llm download {entry['id']}",
-              file=sys.stderr)
-        return 1
+    if args.alias:
+        entry = _resolve_catalog(args.alias)
+        if not entry:
+            print(f"error: unknown catalog id: {args.alias}", file=sys.stderr)
+            return 1
+        if not downloader.is_downloaded(entry, cfg):
+            print(f"error: {entry['id']} is not downloaded yet. Run: hydra-llm download {entry['id']}",
+                  file=sys.stderr)
+            return 1
+    else:
+        catalog, _ = cfg_mod.load_catalog()
+        downloaded = [m for m in catalog if downloader.is_downloaded(m, cfg)]
+        if not downloaded:
+            print("error: no models downloaded. Browse with: hydra-llm list-online",
+                  file=sys.stderr)
+            print("       then run: hydra-llm download <id>", file=sys.stderr)
+            return 1
+        if len(downloaded) > 1:
+            print("error: multiple models available; specify which to start:", file=sys.stderr)
+            for m in downloaded:
+                print(f"  hydra-llm start {m['id']}", file=sys.stderr)
+            return 1
+        entry = downloaded[0]
     ok, info = docker_driver.start_model(entry, cfg, port=args.port)
     if not ok:
         print(f"error: {info.get('error')}", file=sys.stderr)

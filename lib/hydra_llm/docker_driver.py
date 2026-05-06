@@ -104,11 +104,17 @@ def start_model(catalog_entry, cfg=None, port=None):
     prefix = cfg["container_prefix"]
     name = _container_name(prefix, alias)
 
-    running, _ = list_running(cfg)
-    if any(r["container"] == name for r in running):
+    rows, _ = list_running(cfg)
+    existing = next((r for r in rows if r["container"] == name), None)
+    if existing and existing.get("state") == "running":
         return True, {"already_running": True, "container": name}
+    # Stale container in 'exited'/'created' state: docker run --name would
+    # collide. Remove it so we can recreate cleanly.
+    if existing:
+        subprocess.run(["docker", "rm", "-f", name],
+                       capture_output=True, text=True, timeout=10)
 
-    used_ports = {r["port"] for r in running if r["port"]}
+    used_ports = {r["port"] for r in rows if r["port"] and r["container"] != name}
     if port is None:
         port = catalog_entry.get("default_port")
     if not port or port in used_ports:

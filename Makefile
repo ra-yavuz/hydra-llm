@@ -30,6 +30,7 @@ install:
 	           $(SHAREDIR)/personas $(SHAREDIR)/docker $(SHAREDIR)/scripts \
 	           $(DOCDIR) $(COMPLETIONDIR)
 	install -m 0755 bin/hydra-llm                 $(BINDIR)/hydra-llm
+	ln -sf hydra-llm                              $(BINDIR)/hydrallm
 	install -m 0644 lib/hydra_llm/*.py            $(LIBDIR)/hydra_llm/
 	install -m 0644 catalog/catalog.yaml          $(SHAREDIR)/catalog.yaml
 	install -m 0644 personas/friendly-tutor.md    $(SHAREDIR)/personas/friendly-tutor.md
@@ -41,7 +42,7 @@ install:
 	install -m 0644 LICENSE                       $(DOCDIR)/LICENSE
 
 uninstall:
-	rm -f $(BINDIR)/hydra-llm
+	rm -f $(BINDIR)/hydra-llm $(BINDIR)/hydrallm
 	rm -rf $(LIBDIR)
 	rm -rf $(SHAREDIR)
 	rm -rf $(DOCDIR)
@@ -53,7 +54,7 @@ dev-install:
 	@bash scripts/dev-install.sh "$(USER_BIN)" "$(USER_LIB)" "$(USER_SHARE)"
 
 dev-uninstall:
-	rm -f $(USER_BIN)/hydra-llm
+	rm -f $(USER_BIN)/hydra-llm $(USER_BIN)/hydrallm
 	rm -rf $(USER_LIB) $(USER_SHARE)
 	@echo "Removed dev install (user config in ~/.config/hydra-llm is kept)."
 
