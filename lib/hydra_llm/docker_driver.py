@@ -147,6 +147,18 @@ def start_model(catalog_entry, cfg=None, port=None):
         "--port", "8081",
         "--log-disable",
     ]
+    # Default cap on generated tokens for clients that omit max_tokens.
+    # "off" means "don't pass --predict; let llama-server use its built-in 128".
+    predict = cfg.get("predict")
+    if predict == "uncapped":
+        cmd += ["--predict", "-1"]
+    elif isinstance(predict, int):
+        cmd += ["--predict", str(predict)]
+    elif isinstance(predict, str) and predict not in ("off", ""):
+        try:
+            cmd += ["--predict", str(int(predict))]
+        except ValueError:
+            pass  # Unrecognized value: silently skip rather than fail to start.
     extra = catalog_entry.get("extra_args", [])
     if isinstance(extra, list):
         cmd += extra

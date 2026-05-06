@@ -18,7 +18,28 @@ DEFAULT_CONFIG = {
     "image": "auto",
     # If True, list-online includes models that don't fit local hardware (just marks them).
     "show_unfit": True,
+    # Default cap on tokens generated *when the client doesn't send max_tokens*.
+    # Accepted: "uncapped" (passes --predict -1), "off" (don't pass the flag,
+    # so llama-server's built-in 128 applies), or a positive integer.
+    # Clients that send max_tokens always win; this only fills in the default.
+    "predict": "uncapped",
 }
+
+
+def save_user_config(cfg: dict) -> Path:
+    """Write the user config back to ~/.config/hydra-llm/config.yaml.
+    Returns the path written. Drops keys that match the default to keep the
+    file small and readable."""
+    path = paths.USER_CONFIG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Only persist values that actually differ from the built-in defaults.
+    diff = {k: v for k, v in cfg.items() if DEFAULT_CONFIG.get(k) != v}
+    with open(path, "w") as f:
+        f.write("# hydra-llm user config. Edited by `hydra-llm config-*` "
+                "commands and by hand.\n\n")
+        if diff:
+            yaml.safe_dump(diff, f, sort_keys=False, default_flow_style=False)
+    return path
 
 
 def load_user_config():

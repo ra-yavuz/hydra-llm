@@ -119,6 +119,28 @@ def main():
                    help="disable autostart and remove the unit")
     p.set_defaults(func=cmd_autostart)
 
+    p = sub.add_parser(
+        "predict",
+        help="set the default cap on tokens generated when the client does "
+             "not send max_tokens",
+        parents=[json_parent],
+        description=(
+            "Sets the server-side fallback for clients that don't send "
+            "max_tokens. Clients that do send max_tokens always win; this "
+            "only changes the default.\n\n"
+            "Accepted values:\n"
+            "  uncapped    no cap; stop on EOS or context full (recommended)\n"
+            "  off         don't pass --predict; llama-server's built-in 128 applies\n"
+            "  <integer>   any positive integer, e.g. 2048\n"
+            "\n"
+            "Run with no arguments to show the current value. Takes effect "
+            "for newly started containers; restart running ones to apply."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("value", nargs="?",
+                   help="uncapped | off | <integer>")
+    p.set_defaults(func=cmd_predict)
+
     p = sub.add_parser("api", help="print API URLs and a sample request for a running model")
     p.add_argument("alias")
     p.set_defaults(func=cmd_api)
@@ -615,6 +637,55 @@ def cmd_autostart(args):
     else:
         print(f"error: {msg}", file=sys.stderr)
     return 0 if ok else 1
+
+
+def cmd_predict(args):
+    cfg = cfg_mod.load_user_config()
+    current = cfg.get("predict")
+    if args.value is None:
+        info = {
+            "current": current,
+            "accepted": ["uncapped", "off", "<positive integer>"],
+            "note": "Clients that send max_tokens override this. Restart "
+                    "running containers to apply changes.",
+        }
+        if args.json:
+            print(json.dumps(info, indent=2))
+            return 0
+        print(f"predict: {current}")
+        print("accepted values:")
+        print("  uncapped    no cap; stop on EOS or context full (recommended)")
+        print("  off         don't pass --predict; llama-server's built-in 128 applies")
+        print("  <integer>   any positive integer, e.g. 2048")
+        print("note: clients that send max_tokens override this. Restart "
+              "running containers to apply.")
+        return 0
+    raw = args.value.strip().lower()
+    if raw == "uncapped":
+        new = "uncapped"
+    elif raw == "off":
+        new = "off"
+    else:
+        try:
+            n = int(raw)
+        except ValueError:
+            print(f"error: not a valid value: {args.value!r}. "
+                  "Try: uncapped, off, or a positive integer.", file=sys.stderr)
+            return 1
+        if n <= 0:
+            print("error: integer must be positive (use 'uncapped' for no cap, "
+                  "'off' to clear).", file=sys.stderr)
+            return 1
+        new = n
+    cfg["predict"] = new
+    path = cfg_mod.save_user_config(cfg)
+    if args.json:
+        print(json.dumps({"ok": True, "predict": new, "path": str(path)}))
+    else:
+        print(f"predict set to: {new}")
+        print(f"  config: {path}")
+        print("Restart any running containers to apply: hydra-llm stop <id> && hydra-llm start <id>")
+    return 0
 
 
 def cmd_stop(args):
