@@ -179,7 +179,7 @@ TIERS = [
     },
     {
         "id": "halo",
-        "name": "AMD Strix Halo class (64+ GB unified, iGPU)",
+        "name": "Big iGPU + unified RAM (Strix Point / Halo, Apple Silicon Pro/Max)",
         "match": lambda h: h["ram"]["total_mb"] >= 48_000 and any(g.get("iGPU") for g in h["gpus"]),
     },
     {

@@ -27,6 +27,14 @@ A command-line tool plus optional KDE Plasma widget for managing local language 
 
 Existing options are either too magic (you don't know what's running) or too raw (manual Docker, manual ports, manual config). hydra-llm sits in the middle: it's transparent (one config file, real Docker containers you can see), but ergonomic (one command to download a model, one to chat).
 
+## What you actually get
+
+- **Stable OpenAI-compatible endpoints.** Every running model exposes `POST /v1/chat/completions` on its own local port from your `port_range`. Point Aider, Continue.dev, Open Interpreter, [lillycoder](https://ra-yavuz.github.io/lillycoder/), or your own scripts at `http://localhost:18080/v1` and rotate which model is behind that port with `hydra-llm stop A && start B`. No client config changes, no API keys.
+- **Container lifecycle without the docker-fu.** `start`, `stop`, `stop-all`, `status`, `api`. Two engine images (Vulkan, CPU) are built locally on first `setup` and auto-selected from your hardware, with a CPU fallback if Vulkan misbehaves. Each model gets a stable container name (`hydra-<id>`) and a reserved port.
+- **Hardware-aware curated catalog.** `hydra-llm list-online` filters community-quantized GGUFs to what your machine can actually run (Bartowski, lmstudio-community, mradermacher). Tiers cover everything from a 4 GB box to a 70B-on-iGPU Strix Point/Halo machine. All downloads work without a Hugging Face account.
+- **Optional KDE Plasma 6 panel widget.** Visual control surface: per-row Start/Stop, Console launcher, inline log pane, prompt/params editor, and a HAL-eye tray indicator that breathes with system load. See below.
+- **Personas, prompts, and persistent sessions.** Reusable persona files, per-alias system prompts and sampling params (narrowest layer wins), and chat sessions saved as JSON you can resume.
+
 ## Quick start
 
 ### 1. Add the apt repo (one time)
@@ -87,18 +95,42 @@ Three layers, narrowest wins:
 
 Inside the chat REPL: `/params` shows the currently active values, `/set <key> <value>` changes one for the session only, `/reset` clears history but keeps the system prompt, `/thoughts on|off` toggles reasoning output for models that emit it.
 
-## Plasma widget
+## Plasma widget (the headline UI for KDE 6 users)
 
-If you installed `hydra-llm-plasma`, drop the **Hydra LLM** widget on your panel. Each row has buttons for:
+```sh
+sudo apt install hydra-llm-plasma
+```
+
+Then right-click the panel -> **Add or Manage Widgets...** -> drag **Hydra LLM** onto the panel. The widget reads the same `~/.config/hydra-llm/` as the CLI, so anything you registered with `addlocal` shows up automatically.
+
+Per-row controls:
 
 - **Start / Stop**: brings the container up or tears it down. Starting a model auto-opens the inline log console below the model list, so you can watch the model load.
-- **Console**: opens your terminal emulator running `hydra-llm chat <alias>` (tries `konsole` → `gnome-terminal` → `alacritty` → `kitty` → `xfce4-terminal` → `xterm` → `x-terminal-emulator`, first found wins).
+- **Console**: opens your terminal emulator running `hydra-llm chat <alias>` (tries `konsole` -> `gnome-terminal` -> `alacritty` -> `kitty` -> `xfce4-terminal` -> `xterm` -> `x-terminal-emulator`, first found wins).
 - **Logs**: toggle the inline `docker logs --tail 80` pane for any running model.
 - **Configure**: opens an editor for the system prompt and sampling params for that alias. Inline values from your catalog take precedence over the file editor; the editor disables Save in that case.
 
-The HAL-eye indicator in the panel breathes faster as CPU/RAM/GPU/VRAM utilisation goes up, shows a yellow scanning ring while a container is loading, and turns solid red once at least one model is healthy.
+The **HAL-eye indicator** in the panel breathes faster as CPU/RAM/GPU/VRAM utilisation goes up, shows a yellow scanning ring while a container is loading, and turns solid red once at least one model is healthy.
 
-Or as an HTTP API:
+Native widgets for GNOME, XFCE, and others are on the roadmap. On every other desktop the CLI works fully today; see [INTEGRATIONS.md](INTEGRATIONS.md).
+
+## Pairs with lillycoder
+
+[`lillycoder`](https://github.com/ra-yavuz/lillycoder) is a sibling project: a local-first coder REPL with file and shell tools that talks to any OpenAI-compatible `/v1` endpoint. hydra-llm exposes exactly that endpoint, so the two compose into a fully local coding agent in one terminal:
+
+```sh
+# in hydra-llm: pick something good at code
+hydra-llm start qwen2.5-32b
+hydra-llm api   qwen2.5-32b           # prints the URL
+
+# in your project directory:
+lillycoder --api http://localhost:18087/v1
+# (lilly auto-detects common local LLM ports too, so just `lillycoder` often works)
+```
+
+hydra-llm manages the model server (download, start, stop, watch, system prompts). lillycoder is the agent that sits in front of it: reads/writes files, runs shell commands, greps your codebase, all under a permission gate. No cloud, no API key, no telemetry on either end.
+
+## API access (for any OpenAI-compatible client)
 
 ```sh
 hydra-llm start gemma-2-2b
@@ -112,7 +144,7 @@ hydra-llm api gemma-2-2b
 |---           |---                                   |---|
 | `tiny`       | 4-8 GB RAM, no dGPU                  | TinyLlama, Phi-3-mini, Gemma-2-2B |
 | `laptop`     | 16-32 GB RAM, integrated GPU         | Llama-3.1-8B Q4, Mistral-7B Q4 |
-| `halo`       | 64-128 GB unified RAM, AMD Strix iGPU| Gemma-3-27B Q4, Qwen-2.5-32B Q4 |
+| `halo`       | 48+ GB unified RAM, big iGPU (Strix Point/Halo, Apple Silicon Pro/Max) | Gemma-3-27B Q4, Qwen-2.5-32B Q4 |
 | `workstation`| 24+ GB dGPU                          | Llama-3.3-70B Q4 |
 | `server`     | multi-GPU or 64+ GB system           | Mixtral-8x22B Q4, Llama-3.3-70B Q5 |
 

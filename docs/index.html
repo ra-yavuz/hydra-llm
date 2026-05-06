@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>hydra-llm - Run local LLMs the easy way</title>
-<meta name="description" content="hydra-llm: a Linux command-line tool by Ramazan Yavuz to run local LLMs via llama.cpp in Docker. Curated model catalog, anonymous Hugging Face downloads, KDE Plasma 6 widget, hardware doctor, no telemetry.">
+<meta name="description" content="hydra-llm by Ramazan Yavuz: run local LLMs from a single CLI or a KDE Plasma panel widget. Curated GGUF catalog, anonymous Hugging Face downloads, OpenAI-compatible endpoints on stable ports, hardware-aware filtering, no telemetry. Pairs with lillycoder for in-terminal coding agents.">
 <meta name="author" content="Ramazan Yavuz">
-<meta name="keywords" content="hydra-llm, local llm, self-hosted ai, llama.cpp, gguf, ollama alternative, kde plasma widget, anonymous huggingface, ramazan yavuz">
+<meta name="keywords" content="hydra-llm, local llm, self-hosted ai, llama.cpp, gguf, ollama alternative, kde plasma widget, plasmoid, openai compatible api, lillycoder, anonymous huggingface, strix point, strix halo, apple silicon, ramazan yavuz">
 <meta name="robots" content="index,follow">
 <link rel="canonical" href="https://ra-yavuz.github.io/hydra-llm/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="hydra-llm - Run local LLMs the easy way">
-<meta property="og:description" content="One CLI to download, start, chat, and monitor local LLMs. KDE Plasma widget included. No telemetry, no API key, anonymous downloads.">
+<meta property="og:description" content="One CLI plus a KDE panel widget to download, start, chat with, and monitor local LLMs. OpenAI-compatible endpoints on stable ports. No cloud, no API key, no telemetry.">
 <meta property="og:url" content="https://ra-yavuz.github.io/hydra-llm/">
 <meta property="og:site_name" content="ra-yavuz">
 <meta name="twitter:card" content="summary">
@@ -72,7 +72,7 @@
 
 <img class="brand" src="logo.png" alt="hydra-llm logo: a three-headed hydra between angle brackets">
 <h1>hydra-llm</h1>
-<p class="tag">Run local LLMs the easy way. Pick a model, download it, chat with it. No cloud, no API key, no telemetry.</p>
+<p class="tag">Run local LLMs the easy way. One CLI <em>plus</em> a KDE Plasma panel widget to download, start, chat with, and monitor models in Docker. Stable OpenAI-compatible endpoints on local ports, so any tool that speaks <code>/v1/chat/completions</code> just works. No cloud, no API key, no telemetry.</p>
 
 <div class="warn">
   <strong>No warranty.</strong> hydra-llm runs LLMs on your machine, manages Docker containers, downloads multi-gigabyte model files from third-party hosts, and exposes HTTP APIs on local ports. It is provided <strong>as is, without warranty of any kind.</strong> The author is not liable for any damage to hardware, data, or system, or for the content of model output. LLM outputs are unreliable and must not be used for safety-critical decisions. By installing or running this software you accept these terms. Read the full disclaimer in the
@@ -113,7 +113,7 @@ hydra-llm chat llama-3.1-8b</code></pre>
   <tbody>
     <tr><td><code>tiny</code></td><td>4-8 GB RAM, no dGPU</td><td>SmolLM2, Phi-3.5-mini, Gemma-2-2B</td></tr>
     <tr><td><code>laptop</code></td><td>16-32 GB RAM, integrated GPU</td><td>Llama-3.1-8B Q4, Mistral-7B Q4</td></tr>
-    <tr><td><code>halo</code></td><td>64-128 GB unified, AMD Strix iGPU</td><td>Gemma-2-27B Q4, Qwen-2.5-32B Q4</td></tr>
+    <tr><td><code>halo</code></td><td>48+ GB unified RAM, big iGPU (Strix Point/Halo, Apple Silicon Pro/Max)</td><td>Gemma-2-27B Q4, Qwen-2.5-32B Q4</td></tr>
     <tr><td><code>workstation</code></td><td>24+ GB dGPU</td><td>Llama-3.3-70B Q4</td></tr>
     <tr><td><code>server</code></td><td>multi-GPU or 64+ GB system RAM</td><td>Llama-3.3-70B Q5, MoEs</td></tr>
   </tbody>
@@ -121,15 +121,48 @@ hydra-llm chat llama-3.1-8b</code></pre>
 <p><code>hydra-llm doctor</code> classifies your machine automatically.</p>
 
 <h2>What you get</h2>
+
+<h3>Stable OpenAI-compatible endpoints</h3>
+<p>Every running model exposes <code>POST /v1/chat/completions</code> on its own local port from your <code>port_range</code>. Point Aider, Continue.dev, Open Interpreter, or your own scripts at <code>http://localhost:18080/v1</code> and rotate which model is behind that port with <code>hydra-llm stop A &amp;&amp; start B</code>. No client config changes, no API keys.</p>
+
+<h3>Container lifecycle without the docker-fu</h3>
+<p><code>start &lt;id&gt;</code>, <code>stop &lt;id&gt;</code>, <code>stop-all</code>, <code>status</code>, <code>api &lt;id&gt;</code>. Two engine images (Vulkan, CPU) are built locally on first <code>setup</code> and auto-selected from your hardware, with a CPU fallback if Vulkan misbehaves. Each model gets a stable container name (<code>hydra-&lt;id&gt;</code>) and a reserved port.</p>
+
+<h3>Hardware-aware catalog</h3>
+<p><code>hydra-llm list-online</code> filters a curated GGUF catalog (Bartowski, lmstudio-community, mradermacher) to what your machine can actually run, scored against your tier from <code>hydra-llm doctor</code>. Tiers cover everything from a 4 GB Pi-class box to a 70B-on-iGPU Strix Point/Halo machine. All catalog downloads work without a Hugging Face account; <code>HF_TOKEN</code> is supported but never required.</p>
+
+<h3>Personas, prompts, and persistent sessions</h3>
+<p>Reusable persona files in <code>~/.config/hydra-llm/personas/&lt;name&gt;.md</code>. Per-alias system prompts in <code>prompts/&lt;alias&gt;.txt</code> and sampling params in <code>params/&lt;alias&gt;.json</code>. Narrowest layer wins. Chat sessions persist as JSON in <code>~/.local/state/hydra-llm/sessions/</code>; resume with <code>--session &lt;name&gt;</code>. Inside the REPL: <code>/params</code>, <code>/set</code>, <code>/reset</code>, <code>/thoughts on|off</code>.</p>
+
+<h3>Single CLI</h3>
+<p><code>hydra-llm</code> with subcommands like <code>setup</code>, <code>doctor</code>, <code>list</code>, <code>list-online</code>, <code>download</code>, <code>addlocal</code>, <code>start</code>, <code>stop</code>, <code>stop-all</code>, <code>status</code>, <code>chat</code>, <code>api</code>, <code>persona</code>, <code>uninstall</code>, <code>wipe</code>.</p>
+
+<h2>The KDE Plasma panel widget</h2>
+<p>For Plasma 6 users, <code>hydra-llm-plasma</code> is the headline experience. Drop the <strong>Hydra LLM</strong> widget on your panel and you get a visual control surface for every model in your catalog without ever opening a terminal:</p>
 <ul class="tight">
-  <li>Single CLI: <code>hydra-llm</code> with subcommands like <code>setup</code>, <code>chat</code>, <code>start</code>, <code>stop</code>, <code>list-online</code>, <code>download</code>, <code>addlocal</code>, <code>doctor</code>, <code>uninstall</code>, <code>wipe</code>.</li>
-  <li>Curated catalog of community-quantized GGUFs that download anonymously.</li>
-  <li>Two engine images (Vulkan, CPU) built locally on first <code>setup</code>; auto-fallback if the preferred image fails.</li>
-  <li>Persona files: drop a markdown file with optional YAML front matter into <code>~/.config/hydra-llm/personas/</code> and <code>--persona &lt;name&gt;</code> picks it up.</li>
-  <li>Persistent chat sessions in <code>~/.local/state/hydra-llm/sessions/</code>; resume with <code>--session &lt;name&gt;</code>.</li>
-  <li>OpenAI-compatible HTTP API exposed by every running model. <code>hydra-llm api &lt;id&gt;</code> prints a copy-paste curl command.</li>
-  <li>Optional KDE Plasma 6 widget (<code>hydra-llm-plasma</code>) with a HAL-eye animated indicator and inline log console.</li>
+  <li><strong>Per-row Start / Stop</strong>: tear a model up or down. Starting a model auto-opens the inline log console below the list so you can watch it load.</li>
+  <li><strong>Console</strong>: opens your terminal emulator into <code>hydra-llm chat &lt;alias&gt;</code> (tries konsole, gnome-terminal, alacritty, kitty, xfce4-terminal, xterm in that order).</li>
+  <li><strong>Logs</strong>: inline <code>docker logs --tail 80</code> pane per model; toggle on/off without leaving the widget.</li>
+  <li><strong>Configure</strong>: edit the system prompt and sampling params for that alias from a small dialog. Inline catalog values take precedence; the dialog disables Save in that case.</li>
+  <li><strong>HAL-eye indicator</strong> in the tray: breathes faster as CPU/RAM/GPU/VRAM utilisation rises, scans yellow while a container is loading, turns solid red once at least one model is healthy.</li>
 </ul>
+<div class="apt">
+<strong>Install:</strong>
+<pre><code>sudo apt install hydra-llm-plasma</code></pre>
+<p style="margin: 10px 0 0 0;">Then right-click the panel &rarr; <em>Add or Manage Widgets...</em> &rarr; drag <strong>Hydra LLM</strong> onto the panel. The widget reads the same <code>~/.config/hydra-llm/</code> as the CLI; anything you register with <code>addlocal</code> shows up automatically.</p>
+</div>
+<p style="opacity: 0.85; font-size: 0.95rem;">Native widgets for GNOME, XFCE, and others are on the roadmap. On every other desktop the CLI works fully today; see <a href="https://github.com/ra-yavuz/hydra-llm/blob/main/INTEGRATIONS.md">INTEGRATIONS.md</a>.</p>
+
+<h2>Pairs with lillycoder</h2>
+<p><a href="https://ra-yavuz.github.io/lillycoder/">lillycoder</a> is a sibling project: a local-first coder REPL with file and shell tools that talks to any OpenAI-compatible <code>/v1</code> endpoint. hydra-llm exposes exactly that endpoint on a stable port, so the two compose into a fully local coding agent in one terminal:</p>
+<pre><code># in hydra-llm:
+hydra-llm start qwen2.5-32b           # or any 'code' tagged model from list-online
+hydra-llm api   qwen2.5-32b           # prints the URL
+
+# in your project directory:
+lillycoder --api http://localhost:18087/v1
+# (lilly auto-detects common local LLM ports too, so just `lillycoder` often works)</code></pre>
+<p>hydra-llm manages the model server (download, start, stop, watch). lillycoder is the agent that sits in front of it, reads/writes files, runs shell commands, and grep's your codebase under a permission gate. No cloud, no API key, no telemetry on either end.</p>
 
 <h2>Bring your own models</h2>
 <p>Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? Two steps.</p>

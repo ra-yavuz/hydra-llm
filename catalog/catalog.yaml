@@ -155,7 +155,7 @@ models:
     recommended_for: [halo, workstation, server]
     license: Gemma
     tags: [large, instruct]
-    notes: "Excellent quality. On Strix Halo iGPUs, weights spill into system RAM via GTT."
+    notes: "Excellent quality. On big-iGPU systems (Strix Point/Halo) weights spill into system RAM via GTT."
 
   - id: qwen2.5-32b
     name: "Qwen2.5 32B Instruct (Q4_K_M)"
@@ -184,4 +184,4 @@ models:
     recommended_for: [workstation, server, halo]
     license: Llama-3.3
     tags: [flagship, instruct]
-    notes: "Flagship instruct model. Halo Strix can run it via GTT spill."
+    notes: "Flagship instruct model. Big-iGPU systems run it via GTT spill into unified RAM."

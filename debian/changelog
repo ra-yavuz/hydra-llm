@@ -1,3 +1,19 @@
+hydra-llm (0.1.3-1) unstable; urgency=low
+
+  * Tier `halo` is now correctly described as "big iGPU + unified RAM
+    (Strix Point/Halo, Apple Silicon Pro/Max)". Previously the display
+    name and catalog notes incorrectly attributed it to Strix Halo only,
+    even though Strix Point machines with 48+ GB unified RAM also match.
+    Tier slug and match logic are unchanged; user catalogs are unaffected.
+  * docs: README and project page now lead with the four real wins
+    (stable OpenAI endpoints on local ports, container lifecycle, hardware-
+    aware catalog, personas + persistent sessions), promote the KDE Plasma
+    widget as a first-class feature with an explicit install snippet, and
+    add a "Pairs with lillycoder" symbiosis section.
+  * docs: tightened SEO meta description and keywords on the project page.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.2-1) unstable; urgency=low
 
   * New `hydra-llm addlocal <path>` command. Registers a GGUF you already
