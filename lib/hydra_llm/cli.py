@@ -141,6 +141,28 @@ def main():
                    help="uncapped | off | <integer>")
     p.set_defaults(func=cmd_predict)
 
+    p = sub.add_parser(
+        "reasoning",
+        help="control how the model's 'thinking' / chain-of-thought is exposed",
+        parents=[json_parent],
+        description=(
+            "Sets llama-server's --reasoning-format flag.\n\n"
+            "Accepted values:\n"
+            "  none      thinking stays inline in `content` (e.g. <think>...</think>).\n"
+            "            Default; most plug-and-play.\n"
+            "  deepseek  thinking is split out into a separate `reasoning_content`\n"
+            "            field on each streamed delta. Clients can fold it.\n"
+            "  hide      strip thinking before returning to the client (--reasoning-format auto).\n"
+            "  off       don't pass the flag; use llama-server's compiled-in default.\n"
+            "\n"
+            "Run with no arguments to show the current value. Takes effect for "
+            "newly started containers; restart running ones to apply."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("value", nargs="?",
+                   help="none | deepseek | hide | off")
+    p.set_defaults(func=cmd_reasoning)
+
     p = sub.add_parser("api", help="print API URLs and a sample request for a running model")
     p.add_argument("alias")
     p.set_defaults(func=cmd_api)
@@ -683,6 +705,43 @@ def cmd_predict(args):
         print(json.dumps({"ok": True, "predict": new, "path": str(path)}))
     else:
         print(f"predict set to: {new}")
+        print(f"  config: {path}")
+        print("Restart any running containers to apply: hydra-llm stop <id> && hydra-llm start <id>")
+    return 0
+
+
+def cmd_reasoning(args):
+    cfg = cfg_mod.load_user_config()
+    current = cfg.get("reasoning_format")
+    accepted = ["none", "deepseek", "hide", "off"]
+    if args.value is None:
+        info = {
+            "current": current,
+            "accepted": accepted,
+            "note": "Restart running containers to apply changes.",
+        }
+        if args.json:
+            print(json.dumps(info, indent=2))
+            return 0
+        print(f"reasoning: {current}")
+        print("accepted values:")
+        print("  none      thinking stays inline in `content` (default)")
+        print("  deepseek  thinking goes to a separate `reasoning_content` field")
+        print("  hide      strip thinking before returning to the client")
+        print("  off       don't pass the flag; use llama-server's default")
+        print("note: restart running containers to apply.")
+        return 0
+    raw = args.value.strip().lower()
+    if raw not in accepted:
+        print(f"error: not a valid value: {args.value!r}. "
+              f"Try one of: {', '.join(accepted)}.", file=sys.stderr)
+        return 1
+    cfg["reasoning_format"] = raw
+    path = cfg_mod.save_user_config(cfg)
+    if args.json:
+        print(json.dumps({"ok": True, "reasoning_format": raw, "path": str(path)}))
+    else:
+        print(f"reasoning set to: {raw}")
         print(f"  config: {path}")
         print("Restart any running containers to apply: hydra-llm stop <id> && hydra-llm start <id>")
     return 0

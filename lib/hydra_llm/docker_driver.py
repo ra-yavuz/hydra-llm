@@ -159,6 +159,12 @@ def start_model(catalog_entry, cfg=None, port=None):
             cmd += ["--predict", str(int(predict))]
         except ValueError:
             pass  # Unrecognized value: silently skip rather than fail to start.
+    # How model "thinking" / chain-of-thought is exposed.
+    rf = cfg.get("reasoning_format")
+    rf_map = {"none": "none", "deepseek": "deepseek", "hide": "auto"}
+    if isinstance(rf, str) and rf in rf_map:
+        cmd += ["--reasoning-format", rf_map[rf]]
+    # "off" / unrecognized -> don't pass the flag; llama-server picks its default.
     extra = catalog_entry.get("extra_args", [])
     if isinstance(extra, list):
         cmd += extra

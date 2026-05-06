@@ -1,3 +1,25 @@
+hydra-llm (0.1.9-1) unstable; urgency=low
+
+  * New `hydra-llm reasoning` subcommand controlling how a model's
+    "thinking" / chain-of-thought is exposed. Accepted values:
+      none      thinking stays inline in `content` (default, most
+                plug-and-play; e.g. `<think>...</think>` blocks).
+      deepseek  thinking is split out into a separate
+                `reasoning_content` field on each streamed delta and on
+                the final message. Clients can render it as a fold-out.
+      hide      strip thinking before returning to the client
+                (--reasoning-format auto on llama-server).
+      off       don't pass the flag; use llama-server's compiled-in
+                default (varies by build).
+    Bare `reasoning` shows the current value and the accepted set.
+    Persists to ~/.config/hydra-llm/config.yaml. Takes effect on
+    newly started containers; restart running ones to apply.
+  * Default for new installs is `none`, so Gemma's thinking blocks
+    are visible in the response by default rather than silently
+    stripped.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.8-1) unstable; urgency=low
 
   * New: model containers now launch with `--predict -1` by default,

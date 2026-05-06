@@ -23,6 +23,20 @@ DEFAULT_CONFIG = {
     # so llama-server's built-in 128 applies), or a positive integer.
     # Clients that send max_tokens always win; this only fills in the default.
     "predict": "uncapped",
+    # How llama-server should expose model "thinking" / chain-of-thought.
+    # Accepted:
+    #   "none"     pass --reasoning-format none. Thinking stays inline in
+    #              `content`, e.g. `<think>...</think>` blocks. Most plug-and-play.
+    #   "deepseek" pass --reasoning-format deepseek. Thinking is split out
+    #              into a separate `reasoning_content` field on each streamed
+    #              delta and on the final message. Clients can render it as
+    #              a fold-out.
+    #   "hide"     pass --reasoning-format auto, which strips thinking on
+    #              models that emit it (matches the original "thoughts not
+    #              exposed" behavior).
+    #   "off"      don't pass the flag at all; use llama-server's compiled-in
+    #              default (varies by version).
+    "reasoning_format": "none",
 }
 
 
