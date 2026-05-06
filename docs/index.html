@@ -88,11 +88,15 @@ Do not run with <code>sudo</code>. The installer asks for sudo only for missing 
 </div>
 
 <div class="card">
-<strong>Or via apt</strong> (Debian/Ubuntu, once the apt repo card is published):
-<pre><code>echo "deb [trusted=yes] https://ra-yavuz.github.io/apt stable main" | \
-  sudo tee /etc/apt/sources.list.d/ra-yavuz.list
+<strong>Or via apt</strong> (Debian/Ubuntu). One-time bootstrap, then a normal <code>apt install</code>:
+<pre><code>sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg \
+  | sudo tee /etc/apt/keyrings/ra-yavuz.gpg &gt;/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/ra-yavuz.list
 sudo apt update
-sudo apt install hydra-llm hydra-llm-plasma   # plasma is optional</code></pre>
+sudo apt install hydra-llm hydra-llm-plasma   # plasma widget is optional</code></pre>
+<p style="margin: 10px 0 0 0; opacity: 0.85;">hydra-llm runs every model in a Docker container. If you do not have Docker yet: <code>sudo apt install docker.io &amp;&amp; sudo usermod -aG docker "$USER"</code>, then log out and back in.</p>
 </div>
 
 <h2>Quick start</h2>
@@ -125,6 +129,28 @@ hydra-llm chat llama-3.1-8b</code></pre>
   <li>Persistent chat sessions in <code>~/.local/state/hydra-llm/sessions/</code>; resume with <code>--session &lt;name&gt;</code>.</li>
   <li>OpenAI-compatible HTTP API exposed by every running model. <code>hydra-llm api &lt;id&gt;</code> prints a copy-paste curl command.</li>
   <li>Optional KDE Plasma 6 widget (<code>hydra-llm-plasma</code>) with a HAL-eye animated indicator and inline log console.</li>
+</ul>
+
+<h2>Bring your own models</h2>
+<p>Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? Point hydra-llm at it via a single config key. No symlinks needed; the CLI and the Plasma widget both read this same file.</p>
+<pre><code>mkdir -p ~/.config/hydra-llm
+cat &gt; ~/.config/hydra-llm/config.yaml &lt;&lt;'YAML'
+models_dir: /path/to/your/existing/gguf/folder
+YAML
+hydra-llm list   # confirm what's visible</code></pre>
+<p><code>hydra-llm list</code> matches files against the shipped catalog of known GGUF filenames. To make a custom file appear, add an entry in <code>~/.config/hydra-llm/catalog.yaml</code>:</p>
+<pre><code>models:
+  - id: my-llama-finetune
+    file: my-finetune-Q4_K_M.gguf
+    family: llama
+    tier: laptop
+    context: 8192</code></pre>
+<p>Where things live by default:</p>
+<ul class="tight">
+  <li>Models: <code>~/.local/share/hydra-llm/models/</code> (override with <code>models_dir</code>)</li>
+  <li>Configs, personas, prompts, params: <code>~/.config/hydra-llm/</code></li>
+  <li>Chat sessions: <code>~/.local/state/hydra-llm/sessions/</code></li>
+  <li>Cache: <code>~/.cache/hydra-llm/</code></li>
 </ul>
 
 <h2>Privacy</h2>

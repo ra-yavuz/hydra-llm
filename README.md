@@ -29,21 +29,43 @@ Existing options are either too magic (you don't know what's running) or too raw
 
 ## Quick start
 
+### 1. Add the apt repo (one time)
+
 ```sh
-# Install
-sudo apt install hydra-llm                  # once the apt repo is wired up
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg \
+  | sudo tee /etc/apt/keyrings/ra-yavuz.gpg >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/ra-yavuz.list
+sudo apt update
+```
 
-# See what your machine can run
-hydra-llm doctor
+### 2. Install
 
-# Browse the catalog (filtered to your hardware)
-hydra-llm list-online
+```sh
+sudo apt install hydra-llm                  # add `hydra-llm-plasma` if on KDE
+```
 
-# Download a model
+hydra-llm runs every model in a Docker container. If `docker ps` errors with permission denied:
+
+```sh
+sudo apt install docker.io
+sudo usermod -aG docker "$USER"   # log out / back in for the group to take effect
+```
+
+### 3. First-run setup
+
+```sh
+hydra-llm doctor          # detect your hardware tier
+hydra-llm setup           # build engine image (5-10 min) + tiny starter model + smoke test
+```
+
+### 4. Pick and run a model
+
+```sh
+hydra-llm list-online            # filtered to what your hardware can run
 hydra-llm download gemma-2-2b
-
-# Chat with it
-hydra-llm chat gemma-2-2b
+hydra-llm chat gemma-2-2b        # auto-starts the container, drops you into a REPL
 ```
 
 Or with a personality:
@@ -99,6 +121,40 @@ hydra-llm api gemma-2-2b
 ## Anonymous downloads
 
 The shipped catalog only references community-quantized GGUFs (Bartowski, lmstudio-community, mradermacher). All download anonymously, no Hugging Face account or token required. If you want gated models (official `meta-llama/*` or `google/gemma-*` repos), set `HF_TOKEN` in your environment; the CLI passes it through. The CLI never prompts for, stores, or transmits credentials beyond the download.
+
+## Bring your own models
+
+Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? Point hydra-llm at it instead of using the default `~/.local/share/hydra-llm/models/`:
+
+```sh
+mkdir -p ~/.config/hydra-llm
+cat > ~/.config/hydra-llm/config.yaml <<'YAML'
+models_dir: /path/to/your/existing/gguf/folder
+YAML
+hydra-llm list   # confirm what's visible
+```
+
+The CLI and the Plasma widget both read `models_dir` from this single config, so the widget will see your models too. No symlinks needed.
+
+`hydra-llm list` matches files against the shipped catalog of known GGUF filenames. To make a custom file appear, add a user catalog at `~/.config/hydra-llm/catalog.yaml` with a small entry that names the file and what it should look like:
+
+```yaml
+models:
+  - id: my-llama-finetune
+    file: my-finetune-Q4_K_M.gguf
+    family: llama
+    tier: laptop
+    context: 8192
+```
+
+Where things live, in case you need to reach in by hand:
+
+| What | Default path |
+|---|---|
+| Downloaded models | `~/.local/share/hydra-llm/models/` (override with `models_dir`) |
+| User config + personas + prompts + params | `~/.config/hydra-llm/` |
+| Chat sessions | `~/.local/state/hydra-llm/sessions/` |
+| Cache | `~/.cache/hydra-llm/` |
 
 ## Privacy
 
