@@ -124,28 +124,47 @@ The shipped catalog only references community-quantized GGUFs (Bartowski, lmstud
 
 ## Bring your own models
 
-Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? Point hydra-llm at it instead of using the default `~/.local/share/hydra-llm/models/`:
+Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? Two steps:
+
+### 1. Point hydra-llm at the folder (optional)
 
 ```sh
 mkdir -p ~/.config/hydra-llm
 cat > ~/.config/hydra-llm/config.yaml <<'YAML'
 models_dir: /path/to/your/existing/gguf/folder
 YAML
-hydra-llm list   # confirm what's visible
 ```
 
-The CLI and the Plasma widget both read `models_dir` from this single config, so the widget will see your models too. No symlinks needed.
+The CLI and the Plasma widget both read `models_dir` from this single config, so the widget will see your models too. If you skip this step, hydra-llm uses `~/.local/share/hydra-llm/models/` by default and you can still register files that live elsewhere via `--link` (below).
 
-`hydra-llm list` matches files against the shipped catalog of known GGUF filenames. To make a custom file appear, add a user catalog at `~/.config/hydra-llm/catalog.yaml` with a small entry that names the file and what it should look like:
+### 2. Register each file
 
-```yaml
-models:
-  - id: my-llama-finetune
-    file: my-finetune-Q4_K_M.gguf
-    family: llama
-    tier: laptop
-    context: 8192
+```sh
+# File already lives under models_dir:
+hydra-llm addlocal /path/to/Llama-3.1-8B-Instruct-Q4_K_M.gguf \
+  --tier laptop --vram-gb 6 --ram-gb 12
+
+# File lives somewhere else; create a symlink under models_dir:
+hydra-llm addlocal ~/some/where/My-Finetune-Q4_K_M.gguf \
+  --link --tier workstation --vram-gb 24
 ```
+
+`addlocal` derives a sensible id from the filename, picks the next free port from your `port_range`, fills in the file size automatically, and writes a YAML entry to `~/.config/hydra-llm/catalog.yaml`. Useful flags:
+
+| Flag | Effect |
+|---|---|
+| `--id <slug>` | override the auto-derived id |
+| `--name "..."` | human-readable name shown in `list` |
+| `--tier <t>` | repeat for multiple: `tiny`, `laptop`, `halo`, `workstation`, `server` |
+| `--ram-gb`, `--vram-gb` | feeds the `FIT` column in `hydra-llm list` |
+| `--gpu-layers` | layers to offload (default 99 = all) |
+| `--port` | override the auto-picked port |
+| `--family`, `--license`, `--context` | optional metadata |
+| `--link` | symlink the file into `models_dir` if it lives elsewhere |
+| `--replace` | overwrite an existing entry with the same id |
+| `--yes` | skip the confirmation prompt |
+
+You can always edit `~/.config/hydra-llm/catalog.yaml` by hand afterwards. User entries override shipped entries with the same id.
 
 Where things live, in case you need to reach in by hand:
 

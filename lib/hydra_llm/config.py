@@ -5,6 +5,10 @@ from pathlib import Path
 from . import paths
 
 
+class CatalogError(ValueError):
+    """Raised by add_user_catalog_entry for callers to format nicely."""
+
+
 DEFAULT_CONFIG = {
     "models_dir": str(paths.MODELS_DIR_DEFAULT),
     "port_range": [18080, 18099],
@@ -51,3 +55,49 @@ def load_catalog():
         catalog = list(by_id.values())
         sources.append(str(paths.USER_CATALOG))
     return catalog, sources
+
+
+def add_user_catalog_entry(entry: dict, *, replace: bool = False) -> tuple[Path, bool]:
+    """Append (or replace) one entry in ~/.config/hydra-llm/catalog.yaml.
+
+    Returns (path_written, replaced_existing).
+    Raises CatalogError on a duplicate id when replace=False.
+    """
+    if "id" not in entry or "filename" not in entry:
+        raise CatalogError("entry needs at least id and filename")
+
+    path = paths.USER_CATALOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    data = {"models": []}
+    if path.is_file():
+        with open(path) as f:
+            loaded = yaml.safe_load(f) or {}
+        if isinstance(loaded, dict):
+            data = loaded
+            data.setdefault("models", [])
+        else:
+            raise CatalogError(f"{path} is not a YAML mapping; refusing to overwrite")
+
+    models = data["models"]
+    replaced = False
+    for i, m in enumerate(models):
+        if m.get("id") == entry["id"]:
+            if not replace:
+                raise CatalogError(
+                    f"id {entry['id']!r} already exists in {path}. "
+                    "Pass --replace to overwrite, or pick a different --id."
+                )
+            models[i] = entry
+            replaced = True
+            break
+    if not replaced:
+        models.append(entry)
+
+    # yaml.safe_dump's default flow style is ugly for nested lists; use block.
+    with open(path, "w") as f:
+        f.write("# hydra-llm user catalog. Edited by `hydra-llm addlocal` and by hand.\n")
+        f.write("# User entries override shipped entries with the same id.\n\n")
+        yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False)
+
+    return path, replaced

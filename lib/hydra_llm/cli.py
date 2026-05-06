@@ -65,6 +65,33 @@ def main():
     p.add_argument("--force", action="store_true", help="re-download even if file exists")
     p.set_defaults(func=cmd_download)
 
+    p = sub.add_parser("addlocal",
+                       help="register an existing GGUF on disk as a catalog entry",
+                       parents=[json_parent])
+    p.add_argument("file", help="path to the .gguf file you want to register")
+    p.add_argument("--id", dest="alias_id",
+                   help="catalog id (default: derived from the filename)")
+    p.add_argument("--name", help="human-readable name (default: derived from the filename)")
+    p.add_argument("--tier", action="append", dest="tiers",
+                   choices=["tiny", "laptop", "halo", "workstation", "server"],
+                   help="hardware tier this model fits (repeat for multiple)")
+    p.add_argument("--port", type=int, help="default host port when started")
+    p.add_argument("--gpu-layers", type=int, default=99,
+                   help="layers to offload to GPU (default: 99 = all)")
+    p.add_argument("--ram-gb", type=float, dest="ram_gb",
+                   help="minimum system RAM, GB (informational)")
+    p.add_argument("--vram-gb", type=float, dest="vram_gb",
+                   help="VRAM needed for full offload, GB (informational)")
+    p.add_argument("--context", type=int, help="context window the model supports")
+    p.add_argument("--family", help="model family tag, e.g. llama, qwen, gemma")
+    p.add_argument("--license", help="license string, informational only")
+    p.add_argument("--link", action="store_true",
+                   help="symlink the file into models_dir if it lives elsewhere")
+    p.add_argument("--replace", action="store_true",
+                   help="overwrite an existing user-catalog entry with the same id")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    p.set_defaults(func=cmd_addlocal)
+
     p = sub.add_parser("remove", help="delete a downloaded model file")
     p.add_argument("alias")
     p.add_argument("--yes", action="store_true", help="skip confirmation")
@@ -277,6 +304,156 @@ def _resolve_catalog(alias):
         if m["id"] == alias:
             return m
     return None
+
+
+def _slug_from_filename(stem: str) -> str:
+    """SmolLM2-360M-Instruct-Q4_K_M -> smollm2-360m-instruct."""
+    import re
+    s = stem
+    # Drop common quant suffixes so the id stays readable.
+    s = re.sub(r"[-_.](Q\d+(_[A-Z0-9]+)*|F16|F32|BF16|IQ\d+(_[A-Z0-9]+)*)$",
+               "", s, flags=re.IGNORECASE)
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s or "model"
+
+
+def _next_free_port(cfg, taken: set[int]) -> int | None:
+    lo, hi = cfg.get("port_range", [18080, 18099])
+    for p in range(lo, hi + 1):
+        if p not in taken:
+            return p
+    return None
+
+
+def cmd_addlocal(args):
+    cfg = cfg_mod.load_user_config()
+    src = Path(args.file).expanduser().resolve()
+    if not src.is_file():
+        msg = f"file not found: {src}"
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+    if src.suffix.lower() != ".gguf":
+        print(f"warning: {src.name} does not end in .gguf; proceeding anyway",
+              file=sys.stderr)
+
+    models_dir = Path(cfg.get("models_dir") or paths.MODELS_DIR_DEFAULT).expanduser().resolve()
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    # The container bind-mounts models_dir at /models, so the file MUST live
+    # under that root. Either the user picked a path inside it, or we symlink.
+    try:
+        src.relative_to(models_dir)
+        in_models_dir = True
+    except ValueError:
+        in_models_dir = False
+
+    if not in_models_dir:
+        if not args.link:
+            msg = (f"file is at {src}\n"
+                   f"    but models_dir is {models_dir}\n"
+                   f"    options:\n"
+                   f"      - move/copy the file into {models_dir}\n"
+                   f"      - point models_dir at the file's folder in ~/.config/hydra-llm/config.yaml\n"
+                   f"      - re-run with --link to create a symlink at {models_dir}/{src.name}")
+            if args.json:
+                print(json.dumps({"ok": False, "error": "file outside models_dir"}))
+            else:
+                print(f"error: {msg}", file=sys.stderr)
+            return 1
+        link_path = models_dir / src.name
+        if link_path.exists() or link_path.is_symlink():
+            if link_path.resolve() != src:
+                print(f"error: {link_path} already exists and points elsewhere", file=sys.stderr)
+                return 1
+        else:
+            link_path.symlink_to(src)
+        on_disk_filename = src.name
+    else:
+        on_disk_filename = src.name
+
+    alias = args.alias_id or _slug_from_filename(src.stem)
+    name = args.name or src.stem.replace("_", " ").replace("-", " ")
+
+    size_gb = round(src.stat().st_size / (1024 ** 3), 2)
+
+    running, _ = docker_driver.list_running(cfg)
+    taken_ports = {r["port"] for r in running if r["port"]}
+    if args.port:
+        port = args.port
+    else:
+        # Avoid colliding with the shipped catalog's reserved ports.
+        catalog, _ = cfg_mod.load_catalog()
+        for m in catalog:
+            if m.get("default_port"):
+                taken_ports.add(m["default_port"])
+        port = _next_free_port(cfg, taken_ports)
+        if port is None:
+            print("error: no free port in port_range; pass --port", file=sys.stderr)
+            return 1
+
+    entry: dict = {
+        "id": alias,
+        "name": name,
+        "filename": on_disk_filename,
+        "size_gb": size_gb,
+        "default_port": port,
+        "gpu_layers": args.gpu_layers,
+        "recommended_for": args.tiers or [],
+        "tags": ["local"],
+    }
+    if args.ram_gb is not None:
+        entry["needs_ram_gb"] = args.ram_gb
+    if args.vram_gb is not None:
+        entry["fits_in_vram_gb"] = args.vram_gb
+    if args.context is not None:
+        entry["context"] = args.context
+    if args.family:
+        entry["family"] = args.family
+    if args.license:
+        entry["license"] = args.license
+
+    if not args.json and not args.yes:
+        print("Will register this entry in ~/.config/hydra-llm/catalog.yaml:\n")
+        print(f"  id:           {entry['id']}")
+        print(f"  name:         {entry['name']}")
+        print(f"  filename:     {entry['filename']}")
+        print(f"  models_dir:   {models_dir}" + ("  (symlink created)" if not in_models_dir else ""))
+        print(f"  size:         {entry['size_gb']} GB")
+        print(f"  default_port: {entry['default_port']}")
+        print(f"  gpu_layers:   {entry['gpu_layers']}")
+        if entry["recommended_for"]:
+            print(f"  tiers:        {', '.join(entry['recommended_for'])}")
+        if "needs_ram_gb" in entry:
+            print(f"  needs_ram_gb: {entry['needs_ram_gb']}")
+        if "fits_in_vram_gb" in entry:
+            print(f"  fits_in_vram_gb: {entry['fits_in_vram_gb']}")
+        ans = input("\nWrite entry? [Y/n] ").strip().lower()
+        if ans and ans not in ("y", "yes"):
+            print("aborted.")
+            return 0
+
+    try:
+        path, replaced = cfg_mod.add_user_catalog_entry(entry, replace=args.replace)
+    except cfg_mod.CatalogError as e:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    verb = "replaced" if replaced else "added"
+    if args.json:
+        print(json.dumps({"ok": True, "id": entry["id"], "path": str(path),
+                          "replaced": replaced}, indent=2))
+    else:
+        print(f"\n{verb} {entry['id']} in {path}")
+        print(f"try:  hydra-llm start {entry['id']}")
+        print(f"      hydra-llm chat  {entry['id']}")
+    return 0
 
 
 def cmd_download(args):

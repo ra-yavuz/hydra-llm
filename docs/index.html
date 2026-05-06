@@ -122,7 +122,7 @@ hydra-llm chat llama-3.1-8b</code></pre>
 
 <h2>What you get</h2>
 <ul class="tight">
-  <li>Single CLI: <code>hydra-llm</code> with subcommands like <code>setup</code>, <code>chat</code>, <code>start</code>, <code>stop</code>, <code>list-online</code>, <code>download</code>, <code>doctor</code>, <code>uninstall</code>, <code>wipe</code>.</li>
+  <li>Single CLI: <code>hydra-llm</code> with subcommands like <code>setup</code>, <code>chat</code>, <code>start</code>, <code>stop</code>, <code>list-online</code>, <code>download</code>, <code>addlocal</code>, <code>doctor</code>, <code>uninstall</code>, <code>wipe</code>.</li>
   <li>Curated catalog of community-quantized GGUFs that download anonymously.</li>
   <li>Two engine images (Vulkan, CPU) built locally on first <code>setup</code>; auto-fallback if the preferred image fails.</li>
   <li>Persona files: drop a markdown file with optional YAML front matter into <code>~/.config/hydra-llm/personas/</code> and <code>--persona &lt;name&gt;</code> picks it up.</li>
@@ -132,19 +132,21 @@ hydra-llm chat llama-3.1-8b</code></pre>
 </ul>
 
 <h2>Bring your own models</h2>
-<p>Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? Point hydra-llm at it via a single config key. No symlinks needed; the CLI and the Plasma widget both read this same file.</p>
+<p>Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? Two steps.</p>
+<p><strong>1. Point hydra-llm at the folder</strong> (optional; otherwise the default <code>~/.local/share/hydra-llm/models/</code> is used):</p>
 <pre><code>mkdir -p ~/.config/hydra-llm
 cat &gt; ~/.config/hydra-llm/config.yaml &lt;&lt;'YAML'
 models_dir: /path/to/your/existing/gguf/folder
-YAML
-hydra-llm list   # confirm what's visible</code></pre>
-<p><code>hydra-llm list</code> matches files against the shipped catalog of known GGUF filenames. To make a custom file appear, add an entry in <code>~/.config/hydra-llm/catalog.yaml</code>:</p>
-<pre><code>models:
-  - id: my-llama-finetune
-    file: my-finetune-Q4_K_M.gguf
-    family: llama
-    tier: laptop
-    context: 8192</code></pre>
+YAML</code></pre>
+<p><strong>2. Register each file</strong> with <code>hydra-llm addlocal</code>:</p>
+<pre><code># File already lives under models_dir:
+hydra-llm addlocal /path/to/Llama-3.1-8B-Instruct-Q4_K_M.gguf \
+  --tier laptop --vram-gb 6 --ram-gb 12
+
+# File lives somewhere else; create a symlink under models_dir:
+hydra-llm addlocal ~/some/where/My-Finetune-Q4_K_M.gguf \
+  --link --tier workstation --vram-gb 24</code></pre>
+<p><code>addlocal</code> derives a sensible id from the filename, picks the next free port, fills in the file size, and writes a YAML entry to <code>~/.config/hydra-llm/catalog.yaml</code>. Useful flags: <code>--id</code>, <code>--name</code>, <code>--tier</code> (repeat for multiple), <code>--ram-gb</code>, <code>--vram-gb</code>, <code>--gpu-layers</code>, <code>--port</code>, <code>--family</code>, <code>--license</code>, <code>--context</code>, <code>--link</code>, <code>--replace</code>, <code>--yes</code>. You can always edit the YAML by hand afterwards.</p>
 <p>Where things live by default:</p>
 <ul class="tight">
   <li>Models: <code>~/.local/share/hydra-llm/models/</code> (override with <code>models_dir</code>)</li>

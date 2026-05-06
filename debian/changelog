@@ -1,3 +1,17 @@
+hydra-llm (0.1.2-1) unstable; urgency=low
+
+  * New `hydra-llm addlocal <path>` command. Registers a GGUF you already
+    have on disk as a catalog entry without copying it. Auto-derives id,
+    file size, and a free default port; flags cover --tier, --ram-gb,
+    --vram-gb, --gpu-layers, --port, --id, --name, --family, --license,
+    --context, --replace, --yes. With --link, files outside models_dir
+    are symlinked in (the engine container only mounts models_dir).
+  * docs: rewrite the "Bring your own models" section around addlocal so
+    BYO is a one-liner instead of hand-written YAML. Mention addlocal in
+    the project page's subcommand list.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.1-1) unstable; urgency=low
 
   * user-uninstall: refresh plasmashell after removing the user-mode
