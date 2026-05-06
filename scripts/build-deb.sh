@@ -24,6 +24,9 @@ mkdir -p "$PKG/DEBIAN" \
          "$PKG/usr/share/doc/hydra-llm"
 
 install -m 0755 "$ROOT/bin/hydra-llm"                          "$PKG/usr/bin/hydra-llm"
+# Short alias for easier typing. Relative symlink, so it resolves correctly
+# regardless of where the package is installed.
+ln -sf hydra-llm                                               "$PKG/usr/bin/hydrallm"
 install -m 0644 "$ROOT"/lib/hydra_llm/*.py                     "$PKG/usr/lib/hydra-llm/hydra_llm/"
 install -m 0644 "$ROOT/catalog/catalog.yaml"                   "$PKG/usr/share/hydra-llm/catalog.yaml"
 install -m 0644 "$ROOT/personas/friendly-tutor.md"             "$PKG/usr/share/hydra-llm/personas/friendly-tutor.md"

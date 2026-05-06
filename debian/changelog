@@ -1,3 +1,13 @@
+hydra-llm (0.1.7-1) unstable; urgency=low
+
+  * Fix: the `hydrallm` short alias was missing from the actual .deb in
+    0.1.5 / 0.1.6. CI builds via `scripts/build-deb.sh` (not via the
+    Makefile or `dh_install`), and that script wasn't creating the
+    symlink. Added there too. After upgrading, `which hydrallm`
+    resolves to /usr/bin/hydrallm and runs the same CLI.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.6-1) unstable; urgency=low
 
   * Catalog resolver now accepts a GGUF filename (with or without the
