@@ -6,8 +6,9 @@ import sys
 from pathlib import Path
 
 from . import (
-    __version__, chat as chat_mod, config as cfg_mod, desktop, docker_driver, downloader,
-    hardware, paths, personas as personas_mod, setup as setup_mod, tray as tray_mod,
+    __version__, autostart as autostart_mod, chat as chat_mod, config as cfg_mod,
+    desktop, docker_driver, downloader, hardware, paths,
+    personas as personas_mod, setup as setup_mod, tray as tray_mod,
 )
 
 
@@ -108,6 +109,15 @@ def main():
     p.set_defaults(func=cmd_stop)
 
     sub.add_parser("stop-all", help="stop every model server we manage").set_defaults(func=cmd_stop_all)
+
+    p = sub.add_parser("autostart",
+                       help="start a chosen model when you log in (user systemd unit)",
+                       parents=[json_parent])
+    p.add_argument("alias", nargs="?",
+                   help="catalog id, GGUF filename, or filename without .gguf")
+    p.add_argument("--off", "--disable", action="store_true",
+                   help="disable autostart and remove the unit")
+    p.set_defaults(func=cmd_autostart)
 
     p = sub.add_parser("api", help="print API URLs and a sample request for a running model")
     p.add_argument("alias")
@@ -318,9 +328,17 @@ def cmd_list_online(args):
 # --- download / remove --------------------------------------------------------
 
 def _resolve_catalog(alias):
+    """Find a catalog entry by id, by GGUF filename, or by filename without
+    extension. Exact match in that order. Returns None if nothing matches."""
     catalog, _ = cfg_mod.load_catalog()
     for m in catalog:
         if m["id"] == alias:
+            return m
+    for m in catalog:
+        fn = m.get("filename") or ""
+        if fn == alias:
+            return m
+        if fn.endswith(".gguf") and fn[:-len(".gguf")] == alias:
             return m
     return None
 
@@ -560,6 +578,43 @@ def cmd_start(args):
             print(f"started {info['container']}  port {info['port']}  image {info['image']}")
             print(f"check:   curl -s http://localhost:{info['port']}/health")
     return 0
+
+
+def cmd_autostart(args):
+    if args.off:
+        ok, msg = autostart_mod.disable()
+        if args.json:
+            print(json.dumps({"ok": ok, "message": msg}))
+        else:
+            print(msg)
+        return 0 if ok else 1
+    if not args.alias:
+        st = autostart_mod.status()
+        if args.json:
+            print(json.dumps(st, indent=2))
+            return 0
+        if not st["model"]:
+            print("autostart: off")
+            print("set with: hydra-llm autostart <id>")
+        else:
+            state = "enabled" if st["enabled"] else "disabled"
+            active = "" if st["active"] is None else f", active={st['active']}"
+            print(f"autostart: {state}{active}")
+            print(f"  model: {st['model']}")
+            print(f"  unit:  {st['unit_path']}")
+        return 0
+    entry = _resolve_catalog(args.alias)
+    if not entry:
+        print(f"error: unknown catalog id: {args.alias}", file=sys.stderr)
+        return 1
+    ok, msg = autostart_mod.enable(entry["id"])
+    if args.json:
+        print(json.dumps({"ok": ok, "message": msg, "model": entry["id"]}))
+    elif ok:
+        print(msg)
+    else:
+        print(f"error: {msg}", file=sys.stderr)
+    return 0 if ok else 1
 
 
 def cmd_stop(args):

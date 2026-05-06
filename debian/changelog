@@ -1,3 +1,16 @@
+hydra-llm (0.1.6-1) unstable; urgency=low
+
+  * Catalog resolver now accepts a GGUF filename (with or without the
+    `.gguf` extension) anywhere a catalog id is taken: `start`, `stop`,
+    `download`, `chat`, `api`, etc. Exact match; id wins on collisions.
+  * New `hydra-llm autostart [id]` subcommand. Writes a user-level
+    systemd unit (`~/.config/systemd/user/hydra-llm-autostart.service`)
+    that runs `hydra-llm start <id>` when you log in. Run with no
+    args to see current state. `hydra-llm autostart --off` removes
+    the unit. No root needed; the model id stays in user config.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.5-1) unstable; urgency=low
 
   * `hydra-llm start` no longer requires a model id when exactly one
