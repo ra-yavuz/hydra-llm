@@ -146,12 +146,30 @@ def main():
     p.add_argument("tray_args", nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_tray)
 
+    p = sub.add_parser("help", help="show help for hydra-llm or a specific subcommand")
+    p.add_argument("topic", nargs="?", help="subcommand name (e.g. 'start', 'download')")
+    p.set_defaults(func=lambda a: _cmd_help(parser, sub, a))
+
     args = parser.parse_args()
     if not args.cmd:
         parser.print_help()
         sys.exit(0)
     paths.ensure_user_dirs()
     sys.exit(args.func(args) or 0)
+
+
+def _cmd_help(parser, sub, args):
+    topic = getattr(args, "topic", None)
+    if not topic:
+        parser.print_help()
+        return 0
+    choices = sub.choices
+    if topic not in choices:
+        print(f"hydra-llm help: unknown subcommand '{topic}'", file=sys.stderr)
+        print(f"available: {', '.join(sorted(choices))}", file=sys.stderr)
+        return 2
+    choices[topic].print_help()
+    return 0
 
 
 # --- doctor ------------------------------------------------------------------

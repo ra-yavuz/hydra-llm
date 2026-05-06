@@ -1,3 +1,12 @@
+hydra-llm (0.1.4-1) unstable; urgency=low
+
+  * New `hydra-llm help [subcommand]` subcommand. Previously only
+    `-h`/`--help` worked; typing `hydra-llm help` errored with "invalid
+    choice". Now `hydra-llm help` prints top-level help and
+    `hydra-llm help <subcommand>` prints help for that subcommand.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Wed, 06 May 2026 00:00:00 +0000
+
 hydra-llm (0.1.3-1) unstable; urgency=low
 
   * Tier `halo` is now correctly described as "big iGPU + unified RAM
