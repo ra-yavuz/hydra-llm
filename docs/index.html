@@ -160,27 +160,111 @@ sudo apt install hydra-llm hydra-llm-plasma   # plasma widget is optional</code>
 Do not run with <code>sudo</code>. The installer asks for sudo only for missing system packages.
 </div>
 
-<h2>Quick start (chat side)</h2>
+<h2 id="quickstart">Quickstart, end to end</h2>
 
-<pre><code>hydra-llm doctor                        # detect your hardware
-hydra-llm setup                         # build engine image + starter model
-hydra-llm list-online                   # browse the catalog (filtered to your hardware)
-hydra-llm download llama-3.1-8b
-hydra-llm chat llama-3.1-8b             # interactive REPL, persistent sessions</code></pre>
+<p>Zero to chatting with retrieval over your own folder. Every command below is real, in the order you run them. Deep-dive sections later on this page explain each piece.</p>
 
-<h2 id="rag">Quick start (RAG side) <span class="pill new">new in 0.2</span></h2>
+<h3>1. First-run engine setup</h3>
 
-<pre><code>hydra-llm rag setup                     # pick + download the recommended embedders
-hydra-llm index ~/projects/cool-app     # walk + chunk + embed; stores at .hydra-index/
-hydra-llm query "where do we handle auth tokens?" --in ~/projects/cool-app
+<p>Build the llama.cpp Docker image and pull a starter model so you can confirm the install works:</p>
 
-# Or chat with retrieval:
-hydra-llm chat llama-3.1-8b --rag ~/projects/cool-app
+<pre><code>hydra-llm doctor          # confirm hardware detection (tier, RAM, GPU)
+hydra-llm setup           # build engine image (5-10 min) + starter model + smoke test</code></pre>
 
-# Or bundle a model, a persona, and a corpus into one alias:
-hydra-llm create llama-3.1-8b ~/personas/code-helper.md cool-app-bot \
+<p><code>hydra-llm setup</code> is the only step that takes real time. It builds the Vulkan and CPU engine images locally; the deb itself does not ship them. On a typical laptop this is a one-time 5-10 minute investment.</p>
+
+<h3>2. Pick and download a chat model</h3>
+
+<pre><code>hydra-llm list-online                  # browse the catalog, filtered to what fits
+hydra-llm download gemma-2-2b          # or any id from list-online</code></pre>
+
+<p>Pick something your hardware actually fits; <code>hydra-llm doctor</code> already told you the tier. Want to register your own GGUFs from somewhere else (Ollama, LM Studio, manual download)?</p>
+
+<pre><code>hydra-llm addlocal /path/to/your/gguf/folder/ --link --tier laptop</code></pre>
+
+<p>Recursively registers every <code>.gguf</code> under the folder.</p>
+
+<h3>3. Chat with the model</h3>
+
+<p>Just type <code>hydra-llm chat</code>. As of v0.2.3, no alias is needed:</p>
+
+<pre><code>hydra-llm chat
+# - exactly one model running          -> attaches to it
+# - several running                    -> lists with port numbers, prompts
+# - none running, one downloaded       -> auto-starts that one
+# - none running, several installed    -> lists, prompts
+# - nothing installed                  -> tells you to download one</code></pre>
+
+<p>Or be explicit:</p>
+
+<pre><code>hydra-llm chat gemma-2-2b
+hydra-llm chat 4               # numeric # from `hydra-llm list`</code></pre>
+
+<p>Inside the REPL, slash commands matter: <code>/help</code>, <code>/quit</code>, <code>/reset</code>, <code>/params</code>, <code>/set temperature 0.5</code>.</p>
+
+<p>Sessions persist by default. Each (folder, model) pair gets its own session at <code>~/.local/state/hydra-llm/sessions/&lt;hash&gt;-&lt;alias&gt;.json</code>, so chats in different folders never share history. Override with <code>--session foo</code> for a named cross-folder session, or <code>./chat.json</code> to pin to a project.</p>
+
+<h3>4. Set up RAG (one-time)</h3>
+
+<p>Now the fun part: index a folder so the model can answer questions about <em>your</em> code or notes.</p>
+
+<pre><code>hydra-llm rag setup</code></pre>
+
+<p>You will see a numbered menu like:</p>
+
+<pre><code>Recommended embedder for your tier: qwen3-embed-4b  (2.5 GB)  (NOT installed)
+
+Options:
+  1. Download recommended (qwen3-embed-4b, 2.5 GB)
+  2. Use already-installed nomic-embed-text (prose)
+  3. Pick a different embedder from the catalog
+  4. Cancel; do nothing</code></pre>
+
+<p>Pick <code>1</code> for the recommendation, or <code>2</code> if you already have a smaller embedder you would rather use (especially if your folder is mostly prose: a novel, notes, docs). The "What is an embedder" section below explains the choice in detail.</p>
+
+<h3>5. Index a folder</h3>
+
+<pre><code>cd ~/path/to/your/project
+hydra-llm index .</code></pre>
+
+<p>Walks the folder, classifies each file as code or prose, chunks it, embeds every chunk, and stores everything in <code>&lt;folder&gt;/.hydra-index/</code> (a LanceDB database, ~20-200 MB depending on folder size). Re-running is idempotent: it diffs <code>(mtime, size)</code> against the previous index and only re-embeds changed files. ~1 second for a no-op refresh.</p>
+
+<p>Useful flags: <code>--exclude '*.test.js'</code>, <code>--include 'fixtures/important.json'</code>, <code>--depth 2</code>, <code>--max-file-size-mb 0.5</code>, <code>--full</code>, <code>--dry-run</code>, <code>--tag work</code>.</p>
+
+<h3>6. Sanity-check retrieval (no model needed)</h3>
+
+<pre><code>hydra-llm query "where do we handle auth tokens"</code></pre>
+
+<p>Top-K chunks come back with file path and line range. No chat model involved. If results look off, your index is the problem (try a different embedder, or <code>index . --full</code>); if they look right, you are ready to chat.</p>
+
+<h3>7. Chat with retrieval</h3>
+
+<pre><code>hydra-llm chat --rag .                          # use the index in cwd
+hydra-llm chat gemma-2-2b --rag . --rag-show-chunks  # also echo retrieved locations</code></pre>
+
+<p>Per turn, hydra embeds your message, fetches the top-K chunks from the index, and prepends them to the prompt as a <code>&lt;context&gt;...&lt;/context&gt;</code> block before sending to the model. <code>--rag-show-chunks</code> prints which file paths were retrieved so you can see what the model is being given.</p>
+
+<p>Slash commands inside the REPL: <code>/rag on|off</code>, <code>/rag-show on|off</code>, <code>/rag-chunks on|off</code>, <code>/rag &lt;text&gt;</code> for one-off retrieval without a model call.</p>
+
+<h3>8. Bundle a model + persona + corpus into one alias</h3>
+
+<p>If you find yourself doing the same <code>chat &lt;model&gt; --rag &lt;path&gt;</code> repeatedly:</p>
+
+<pre><code>hydra-llm create gemma-2-2b ~/personas/code-helper.md cool-app-bot \
     --rag-index ~/projects/cool-app
-hydra-llm chat cool-app-bot             # no flags. retrieval just works.</code></pre>
+
+hydra-llm chat cool-app-bot          # no flags. Retrieval just works.</code></pre>
+
+<p>The bundle is a single declarative entry in <code>~/.config/hydra-llm/catalog.yaml</code>. Move that file across machines and the bundle moves with it.</p>
+
+<h3>9. Federate: query across every indexed folder</h3>
+
+<pre><code>hydra-llm rag stores                 # list every folder you have indexed
+hydra-llm query "..." --all          # federated search across all of them
+hydra-llm query "..." --tag work     # only stores tagged with 'work'
+hydra-llm chat &lt;model&gt; --rag-all     # chat with retrieval across all stores</code></pre>
+
+<p>That is the whole arc, end to end. Everything below is depth on each piece.</p>
 
 <h2>What you actually get</h2>
 
