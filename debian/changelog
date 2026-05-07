@@ -1,3 +1,25 @@
+hydra-llm (0.2.4-1) unstable; urgency=low
+
+  * Engine images are now built against a pinned llama.cpp commit
+    instead of git master at install time. The Dockerfiles previously
+    cloned `--branch master --depth 1` whenever a user ran
+    `hydra-llm setup`, which made each install a one-off snapshot
+    against whatever was on master that day. With the pin, every user
+    gets the same image; bumping llama.cpp is a hydra-release decision
+    and reproducibility is guaranteed.
+  * `hydra-llm setup --rebuild` forces a from-scratch rebuild of the
+    engine image even when one already exists locally. Useful after a
+    hydra-llm upgrade if a new release bumped the pin and you want
+    the new image without waiting for it to be re-needed.
+  * The repo URL also moved from ggerganov/llama.cpp to
+    ggml-org/llama.cpp (the canonical upstream as of mid-2026).
+  * Pinned to llama.cpp e43431b38115 (HEAD as of 2026-05-07). Tested
+    end to end with Qwen3-Embedding-4B-Q4_K_M.gguf (which had been
+    failing to load on stale engines because the GGUF parser had
+    not yet learned a metadata key Qwen3 emits).
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Thu, 07 May 2026 14:20:00 +0000
+
 hydra-llm (0.2.3-1) unstable; urgency=low
 
   * Quality-of-life pass on the chat and rag-setup flows after first
