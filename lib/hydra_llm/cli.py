@@ -1995,11 +1995,13 @@ def cmd_rag_stores(args):
             enriched.append({**s, "missing": True})
             continue
         meta = rag_store_mod.read_meta(rp)
+        store_dual = bool(meta.get("dual_index", True))
         info = {
             **s,
             "missing": False,
-            "code_chunks": rag_store_mod.chunk_count(rp, "code"),
-            "prose_chunks": rag_store_mod.chunk_count(rp, "prose"),
+            "dual_index": store_dual,
+            "code_chunks": rag_store_mod.chunk_count(rp, "code", dual=store_dual),
+            "prose_chunks": rag_store_mod.chunk_count(rp, "prose", dual=store_dual),
             "code_embedder": (meta.get("code_embedder") or {}).get("id"),
             "prose_embedder": (meta.get("prose_embedder") or {}).get("id"),
         }

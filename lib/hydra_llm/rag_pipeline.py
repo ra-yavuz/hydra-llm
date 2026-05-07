@@ -242,10 +242,12 @@ def execute_plan(plan: IndexPlan,
     # Drop chunks for deleted/changed files.
     files_registry = rag_store.read_files_registry(plan.root) if not plan.full_rebuild else {}
     chunks_removed = 0
+    dual = plan.dual_index
     if plan.full_rebuild:
-        # Wipe both tables by deleting their dirs; lancedb will recreate.
+        # Wipe whichever tables this index uses; lancedb will recreate.
         idx = rag_store.index_dir(plan.root)
-        for sub in (rag_store.CODE_TABLE, rag_store.PROSE_TABLE):
+        wipe_tables = (rag_store.CODE_TABLE, rag_store.PROSE_TABLE, rag_store.CHUNKS_TABLE)
+        for sub in wipe_tables:
             d = idx / f"{sub}.lance"
             if d.exists():
                 import shutil
@@ -268,7 +270,7 @@ def execute_plan(plan: IndexPlan,
             if ids:
                 emb = plan.code_embedder if kind == "code" else plan.prose_embedder
                 if emb:  # only delete if the table actually exists for this kind
-                    rag_store.delete_by_chunk_ids(plan.root, kind, ids)
+                    rag_store.delete_by_chunk_ids(plan.root, kind, ids, dual=dual)
                     chunks_removed += len(ids)
 
     # Embed and write.
@@ -299,6 +301,7 @@ def execute_plan(plan: IndexPlan,
             rows.append({
                 "chunk_id": cid,
                 "rel_path": c.rel_path,
+                "kind": c.kind,
                 "byte_start": c.byte_start,
                 "byte_end": c.byte_end,
                 "line_start": c.line_start,
@@ -307,7 +310,7 @@ def execute_plan(plan: IndexPlan,
                 "text": c.text,
                 "vector": vec.tolist(),
             })
-        rag_store.upsert_chunks(plan.root, f.kind, emb["dimensions"], rows)
+        rag_store.upsert_chunks(plan.root, f.kind, emb["dimensions"], rows, dual=dual)
         chunks_added += len(rows)
         files_registry[f.rel_path] = {
             "size": f.size, "mtime": f.mtime, "kind": f.kind,
@@ -343,8 +346,8 @@ def execute_plan(plan: IndexPlan,
         plan=plan,
         chunks_added=chunks_added,
         chunks_removed=chunks_removed,
-        code_chunks_total=rag_store.chunk_count(plan.root, "code"),
-        prose_chunks_total=rag_store.chunk_count(plan.root, "prose"),
+        code_chunks_total=rag_store.chunk_count(plan.root, "code", dual=dual),
+        prose_chunks_total=rag_store.chunk_count(plan.root, "prose", dual=dual),
         elapsed_seconds=time.monotonic() - started,
     )
 
@@ -391,6 +394,7 @@ def retrieve(root: Path,
         raise RuntimeError(f"no index at {root} (no .hydra-index/). "
                            f"Run `hydra-llm index {root}` first.")
     meta = rag_store.read_meta(root)
+    dual = bool(meta.get("dual_index", True))
     code_meta = meta.get("code_embedder")
     prose_meta = meta.get("prose_embedder")
     catalog, _ = rag_catalog.load_embedder_catalog()
@@ -409,7 +413,8 @@ def retrieve(root: Path,
             "The embedder catalog may have changed since indexing."
         )
 
-    # Bring embedders up.
+    # Bring embedders up. In single mode code_e and prose_e are the same
+    # entry, so the dedup keeps just one.
     distinct = []
     seen = set()
     for e in (code_e, prose_e):
@@ -427,13 +432,30 @@ def retrieve(root: Path,
             raise RuntimeError(f"failed to start embedder {e['id']}: "
                                f"{info.get('error')}")
 
+    if not dual:
+        # Single-mode: one table, one embedder, no fusion needed. Apply
+        # code-only / prose-only as a SQL filter on the unified table.
+        single_e = code_e or prose_e  # they are the same in single-mode meta
+        qv = embedding.normalize(embedding.embed_query(single_e, query))
+        kf = "code" if code_only else ("prose" if prose_only else None)
+        hits = rag_store.search(root, "code", qv.tolist(),
+                                top_k=top_k, dual=False, kind_filter=kf)
+        for rank, h in enumerate(hits, start=1):
+            h.setdefault("kinds", [h.get("kind")] if h.get("kind") else [])
+            h.setdefault("ranks", {h.get("kind", "?"): rank})
+            h["rrf"] = 1.0 / (rrf_k + rank)
+        return hits
+
+    # Dual mode: two tables, fused via RRF.
     per_kind: dict[str, list[dict]] = {}
     if code_e:
         qv = embedding.normalize(embedding.embed_query(code_e, query))
-        per_kind["code"] = rag_store.search(root, "code", qv.tolist(), top_k=top_k * 3)
+        per_kind["code"] = rag_store.search(root, "code", qv.tolist(),
+                                            top_k=top_k * 3, dual=True)
     if prose_e:
         qv = embedding.normalize(embedding.embed_query(prose_e, query))
-        per_kind["prose"] = rag_store.search(root, "prose", qv.tolist(), top_k=top_k * 3)
+        per_kind["prose"] = rag_store.search(root, "prose", qv.tolist(),
+                                             top_k=top_k * 3, dual=True)
 
     # Reciprocal Rank Fusion. score = sum over rankers of 1/(rrf_k + rank).
     fused: dict[str, dict] = {}
@@ -486,7 +508,7 @@ def retrieve_federated(query: str,
     needed_embedder_ids = set()
     catalog, _ = rag_catalog.load_embedder_catalog()
     cat_by_id = {e["id"]: e for e in catalog}
-    plans = []  # (store_path, code_e, prose_e, code_meta, prose_meta)
+    plans = []  # (store_path, code_e, prose_e, dual)
     skipped: list[tuple[str, str]] = []
     for s in matching:
         rp = Path(s["path"])
@@ -494,6 +516,7 @@ def retrieve_federated(query: str,
             skipped.append((str(rp), "missing-index-dir"))
             continue
         meta = rag_store.read_meta(rp)
+        store_dual = bool(meta.get("dual_index", True))
         ce_id = (meta.get("code_embedder") or {}).get("id")
         pe_id = (meta.get("prose_embedder") or {}).get("id")
         ce = cat_by_id.get(ce_id) if ce_id else None
@@ -520,7 +543,7 @@ def retrieve_federated(query: str,
             needed_embedder_ids.add(ce["id"])
         if pe:
             needed_embedder_ids.add(pe["id"])
-        plans.append((str(rp), ce, pe))
+        plans.append((str(rp), ce, pe, store_dual))
 
     if not plans:
         msg = "no usable stores found"
@@ -546,15 +569,29 @@ def retrieve_federated(query: str,
 
     # Search each store/kind, collect hits with their store path attached.
     fused: dict[str, dict] = {}
-    for store_path, ce, pe in plans:
+    for store_path, ce, pe, store_dual in plans:
         rp = Path(store_path)
         per_kind = {}
-        if ce:
-            per_kind["code"] = rag_store.search(rp, "code", query_vecs[ce["id"]],
-                                                top_k=top_k * 3)
-        if pe:
-            per_kind["prose"] = rag_store.search(rp, "prose", query_vecs[pe["id"]],
-                                                 top_k=top_k * 3)
+        if not store_dual:
+            # Single-mode store: one table, one embedder. Use whichever
+            # embedder is non-None; in single-mode meta they're equal.
+            single_e = ce or pe
+            kf = "code" if code_only else ("prose" if prose_only else None)
+            per_kind["chunks"] = rag_store.search(
+                rp, "code", query_vecs[single_e["id"]],
+                top_k=top_k * 3, dual=False, kind_filter=kf,
+            )
+        else:
+            if ce:
+                per_kind["code"] = rag_store.search(
+                    rp, "code", query_vecs[ce["id"]],
+                    top_k=top_k * 3, dual=True,
+                )
+            if pe:
+                per_kind["prose"] = rag_store.search(
+                    rp, "prose", query_vecs[pe["id"]],
+                    top_k=top_k * 3, dual=True,
+                )
         for kind, hits in per_kind.items():
             for rank, h in enumerate(hits, start=1):
                 cid = h.get("chunk_id")

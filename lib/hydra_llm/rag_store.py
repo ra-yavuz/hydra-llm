@@ -27,11 +27,25 @@ import yaml
 INDEX_DIR_NAME = ".hydra-index"
 META_FILENAME = "meta.yaml"
 FILES_FILENAME = "files.json"
+# Three tables exist in the schema, but a given index uses either:
+#   - dual mode:   "code" + "prose" (different embedders per kind)
+#   - single mode: "chunks" (one embedder for all)
 CODE_TABLE = "code"
 PROSE_TABLE = "prose"
+CHUNKS_TABLE = "chunks"
 
 # Bumped when chunking changes in a way that invalidates existing chunks.
 CHUNKING_VERSION = 1
+
+
+def table_for(kind: str, *, dual: bool) -> str:
+    """Resolve the LanceDB table name for a given chunk kind under a given
+    mode. In single-embedder mode every chunk lives in the unified "chunks"
+    table; in dual mode they live in "code" or "prose" by classifier kind.
+    """
+    if dual:
+        return CODE_TABLE if kind == "code" else PROSE_TABLE
+    return CHUNKS_TABLE
 
 
 def index_dir(root: Path) -> Path:
@@ -102,6 +116,7 @@ def _ensure_table(db, name: str, dimensions: int):
     schema = pa.schema([
         pa.field("chunk_id", pa.string()),
         pa.field("rel_path", pa.string()),
+        pa.field("kind", pa.string()),  # "code" | "prose"; lets single-mode filter without splitting tables
         pa.field("byte_start", pa.int64()),
         pa.field("byte_end", pa.int64()),
         pa.field("line_start", pa.int32()),
@@ -113,26 +128,29 @@ def _ensure_table(db, name: str, dimensions: int):
     return db.create_table(name, schema=schema)
 
 
-def upsert_chunks(root: Path, kind: str, dimensions: int, rows: list[dict]) -> None:
-    """Insert chunk rows into the code/prose table. Rows are dicts matching
-    the schema; vector must already be length=dimensions float32.
+def upsert_chunks(root: Path, kind: str, dimensions: int, rows: list[dict],
+                  *, dual: bool = True) -> None:
+    """Insert chunk rows into the right table for the current mode.
+
+    In dual mode the table is "code" or "prose" by `kind`. In single mode
+    everything goes into the unified "chunks" table; rows still carry a
+    `kind` column so callers can filter (e.g. --code-only).
     """
     if not rows:
         return
     db = _connect(root)
-    table_name = CODE_TABLE if kind == "code" else PROSE_TABLE
+    table_name = table_for(kind, dual=dual)
     tbl = _ensure_table(db, table_name, dimensions)
     tbl.add(rows)
 
 
-def delete_by_chunk_ids(root: Path, kind: str, chunk_ids: list[str]) -> int:
-    """Delete a set of chunk_ids from the code/prose table. Returns count
-    requested (LanceDB's delete doesn't tell us how many actually matched).
-    """
+def delete_by_chunk_ids(root: Path, kind: str, chunk_ids: list[str],
+                        *, dual: bool = True) -> int:
+    """Delete a set of chunk_ids from the right table for the current mode."""
     if not chunk_ids:
         return 0
     db = _connect(root)
-    table_name = CODE_TABLE if kind == "code" else PROSE_TABLE
+    table_name = table_for(kind, dual=dual)
     if table_name not in db.table_names():
         return 0
     tbl = db.open_table(table_name)
@@ -142,22 +160,29 @@ def delete_by_chunk_ids(root: Path, kind: str, chunk_ids: list[str]) -> int:
     return len(chunk_ids)
 
 
-def search(root: Path, kind: str, query_vector, top_k: int = 10) -> list[dict]:
-    """K-NN search against the named table. Returns a list of result dicts
-    with score, rel_path, byte_start/end, line_start/end, text, chunk_id.
+def search(root: Path, kind: str, query_vector, top_k: int = 10,
+           *, dual: bool = True, kind_filter: str | None = None) -> list[dict]:
+    """K-NN search against the right table for the current mode.
+
+    In single mode, optional `kind_filter` ("code" or "prose") restricts to
+    chunks of that classifier kind via a SQL WHERE clause; in dual mode the
+    table itself is per-kind so the filter is implicit.
     """
     db = _connect(root)
-    table_name = CODE_TABLE if kind == "code" else PROSE_TABLE
+    table_name = table_for(kind, dual=dual)
     if table_name not in db.table_names():
         return []
     tbl = db.open_table(table_name)
-    # LanceDB returns a Lance Table; .to_list() yields dicts.
-    df = tbl.search(query_vector).limit(top_k).to_list()
+    q = tbl.search(query_vector).limit(top_k)
+    if (not dual) and kind_filter in ("code", "prose"):
+        q = q.where(f"kind = '{kind_filter}'", prefilter=True)
+    df = q.to_list()
     out = []
     for row in df:
         out.append({
             "chunk_id": row.get("chunk_id"),
             "rel_path": row.get("rel_path"),
+            "kind": row.get("kind"),
             "byte_start": row.get("byte_start"),
             "byte_end": row.get("byte_end"),
             "line_start": row.get("line_start"),
@@ -169,16 +194,27 @@ def search(root: Path, kind: str, query_vector, top_k: int = 10) -> list[dict]:
     return out
 
 
-def chunk_count(root: Path, kind: str) -> int:
-    """Quick row count for a table. 0 if the table doesn't exist yet."""
+def chunk_count(root: Path, kind: str, *, dual: bool = True) -> int:
+    """Quick row count for a table. 0 if the table doesn't exist yet.
+
+    In single mode, counts only rows of `kind` ("code" or "prose") in the
+    unified table; pass kind="" to count all.
+    """
     try:
         db = _connect(root)
     except Exception:
         return 0
-    table_name = CODE_TABLE if kind == "code" else PROSE_TABLE
+    table_name = table_for(kind or "code", dual=dual)
     if table_name not in db.table_names():
         return 0
     tbl = db.open_table(table_name)
+    if (not dual) and kind in ("code", "prose"):
+        # In single-mode the table holds both kinds; filter by classifier.
+        try:
+            return tbl.count_rows(filter=f"kind = '{kind}'")
+        except TypeError:
+            # Older LanceDB without filter kw: fall back to scan.
+            return sum(1 for r in tbl.to_arrow().to_pylist() if r.get("kind") == kind)
     return tbl.count_rows()
 
 
