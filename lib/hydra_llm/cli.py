@@ -10,6 +10,7 @@ from . import (
     __version__, autostart as autostart_mod, chat as chat_mod, config as cfg_mod,
     desktop, docker_driver, downloader, hardware, paths,
     personas as personas_mod, rag_catalog as rag_cat_mod,
+    rag_store as rag_store_mod,
     setup as setup_mod, tray as tray_mod,
 )
 
@@ -297,7 +298,71 @@ def main():
     pp.add_argument("alias")
     pp.set_defaults(func=cmd_rag_info)
 
+    pp = rag_sub.add_parser(
+        "stores", help="list folders that have been indexed",
+        parents=[json_parent],
+    )
+    pp.add_argument("--prune", action="store_true",
+                    help="drop registry entries whose folder no longer exists")
+    pp.set_defaults(func=cmd_rag_stores)
+
     p_rag.set_defaults(func=lambda a: (p_rag.print_help() or sys.exit(1)) if not a.rag_cmd else None)
+
+    # --- top-level index / query commands -----------------------------------
+    p = sub.add_parser(
+        "index",
+        help="build or refresh a RAG index for a folder",
+        parents=[json_parent],
+        description=(
+            "Walk the given folder (default: cwd), classify files as code "
+            "or prose, chunk them, embed each chunk with the appropriate "
+            "embedder, and store the result in <folder>/.hydra-index/.\n\n"
+            "Idempotent: re-running compares (path, mtime, size) against "
+            "the previous index and only re-embeds changed files. Use "
+            "--full to force a rebuild from scratch.\n\n"
+            "Respects .gitignore plus a builtin blacklist (node_modules, "
+            ".venv, build artefacts, binary files, files >1 MB)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("path", nargs="?", default=".", help="folder to index (default: cwd)")
+    p.add_argument("--embedder", help="explicit embedder id (overrides auto code/prose split)")
+    p.add_argument("--code-embedder", help="embedder to use for code files")
+    p.add_argument("--prose-embedder", help="embedder to use for prose files")
+    p.add_argument("--single-index", action="store_true",
+                   help="embed everything with one embedder (no code/prose split)")
+    p.add_argument("--no-code", action="store_true", help="skip code files")
+    p.add_argument("--no-prose", action="store_true", help="skip prose files")
+    p.add_argument("--exclude", action="append", default=[],
+                   help="glob to skip (repeatable; layered on top of .gitignore)")
+    p.add_argument("--include", action="append", default=[],
+                   help="glob to force-include (repeatable; overrides excludes)")
+    p.add_argument("--depth", type=int, help="max recursion depth")
+    p.add_argument("--max-file-size-mb", type=float, default=1.0,
+                   help="skip files larger than this (default: 1 MB)")
+    p.add_argument("--full", action="store_true", help="force a full rebuild")
+    p.add_argument("--dry-run", action="store_true", help="print plan, don't embed")
+    p.add_argument("--no-register", action="store_true",
+                   help="don't add this path to the global stores registry")
+    p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser(
+        "query",
+        help="search a RAG index without entering chat",
+        parents=[json_parent],
+        description=(
+            "Embed the query, search the index, return top-K chunks ordered "
+            "by Reciprocal Rank Fusion across the code and prose indexes."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("text", help="natural-language query")
+    p.add_argument("--in", dest="in_path", default=".",
+                   help="folder containing the .hydra-index/ to search (default: cwd)")
+    p.add_argument("--top-k", type=int, default=5, help="how many results to return")
+    p.add_argument("--code-only", action="store_true", help="search only the code index")
+    p.add_argument("--prose-only", action="store_true", help="search only the prose index")
+    p.set_defaults(func=cmd_query)
 
     sub.add_parser("config-path", help="print the config directory").set_defaults(func=cmd_config_path)
 
@@ -1517,6 +1582,238 @@ def cmd_rag_info(args):
         print(f"running:         no")
     if entry.get("notes"):
         print(f"\n{entry['notes']}")
+    return 0
+
+
+def cmd_rag_stores(args):
+    if args.prune:
+        dropped = rag_store_mod.prune_registry()
+        if args.json:
+            print(json.dumps({"ok": True, "dropped": dropped}, indent=2))
+        elif dropped:
+            for d in dropped:
+                print(f"removed: {d}")
+        else:
+            print("nothing to prune.")
+        return 0
+    reg = rag_store_mod.load_registry()
+    stores = reg.get("stores") or []
+    enriched = []
+    for s in stores:
+        rp = Path(s.get("path", ""))
+        if not (rp / rag_store_mod.INDEX_DIR_NAME).is_dir():
+            enriched.append({**s, "missing": True})
+            continue
+        meta = rag_store_mod.read_meta(rp)
+        info = {
+            **s,
+            "missing": False,
+            "code_chunks": rag_store_mod.chunk_count(rp, "code"),
+            "prose_chunks": rag_store_mod.chunk_count(rp, "prose"),
+            "code_embedder": (meta.get("code_embedder") or {}).get("id"),
+            "prose_embedder": (meta.get("prose_embedder") or {}).get("id"),
+        }
+        enriched.append(info)
+    if args.json:
+        print(json.dumps({"ok": True, "stores": enriched}, indent=2))
+        return 0
+    if not enriched:
+        print("No indexed folders.")
+        print("Try `hydra-llm index <path>` to create one.")
+        return 0
+    print(f"{'PATH':<60} {'CHUNKS':<13} EMBEDDERS")
+    for s in enriched:
+        if s.get("missing"):
+            print(f"{s['path']:<60} {'(gone)':<13} -- (run `hydra-llm rag stores --prune`)")
+            continue
+        chunks = f"{s.get('code_chunks', 0)}+{s.get('prose_chunks', 0)}"
+        embedders = []
+        if s.get("code_embedder"):
+            embedders.append(s["code_embedder"])
+        if s.get("prose_embedder") and s.get("prose_embedder") != s.get("code_embedder"):
+            embedders.append(s["prose_embedder"])
+        print(f"{s['path']:<60} {chunks:<13} {', '.join(embedders) or '-'}")
+    return 0
+
+
+def cmd_index(args):
+    cfg = cfg_mod.load_user_config()
+    try:
+        from . import rag_pipeline
+    except ImportError as e:
+        msg = (f"RAG pipeline import failed: {e}. "
+               "Install missing deps: pip install --user pathspec numpy lancedb")
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+
+    code_e = None
+    prose_e = None
+    if args.embedder:
+        # --embedder selects one for everything (single-index mode).
+        e = rag_cat_mod.find_embedder(args.embedder)
+        if not e:
+            print(f"error: unknown embedder id: {args.embedder}", file=sys.stderr)
+            return 1
+        args.single_index = True
+        code_e = e
+        prose_e = e
+    if args.code_embedder:
+        code_e = rag_cat_mod.find_embedder(args.code_embedder)
+        if not code_e:
+            print(f"error: unknown embedder id: {args.code_embedder}", file=sys.stderr)
+            return 1
+    if args.prose_embedder:
+        prose_e = rag_cat_mod.find_embedder(args.prose_embedder)
+        if not prose_e:
+            print(f"error: unknown embedder id: {args.prose_embedder}", file=sys.stderr)
+            return 1
+
+    only_kind = None
+    if args.no_code and args.no_prose:
+        print("error: --no-code and --no-prose together leaves nothing to index",
+              file=sys.stderr)
+        return 1
+    if args.no_code:
+        only_kind = "prose"
+    elif args.no_prose:
+        only_kind = "code"
+
+    plan = rag_pipeline.plan_index(
+        Path(args.path),
+        cfg=cfg,
+        full_rebuild=args.full,
+        extra_excludes=args.exclude,
+        extra_includes=args.include,
+        max_depth=args.depth,
+        max_file_size_bytes=int(args.max_file_size_mb * 1024 * 1024),
+        code_embedder=code_e,
+        prose_embedder=prose_e,
+        single_index=args.single_index,
+        only_kind=only_kind,
+    )
+
+    if not plan.code_embedder and not plan.prose_embedder:
+        msg = (
+            "no embedders are installed. Run `hydra-llm rag list-online` to "
+            "see what's available, then `hydra-llm rag download <id>` for at "
+            "least one of each kind you want to index."
+        )
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        if args.json:
+            from dataclasses import asdict
+            out = {"ok": True, "dry_run": True, "plan": {
+                "root": str(plan.root),
+                "code_embedder": plan.code_embedder["id"] if plan.code_embedder else None,
+                "prose_embedder": plan.prose_embedder["id"] if plan.prose_embedder else None,
+                "files_to_embed": [f.rel_path for f in plan.files_to_embed],
+                "files_unchanged": plan.files_unchanged,
+                "files_deleted": plan.files_deleted,
+                "full_rebuild": plan.full_rebuild,
+            }}
+            print(json.dumps(out, indent=2))
+        else:
+            print(f"plan for {plan.root}:")
+            print(f"  code embedder:  {plan.code_embedder['id'] if plan.code_embedder else '(none)'}")
+            print(f"  prose embedder: {plan.prose_embedder['id'] if plan.prose_embedder else '(none)'}")
+            print(f"  full rebuild:   {plan.full_rebuild}")
+            print(f"  to embed:       {len(plan.files_to_embed)}")
+            print(f"  unchanged:      {len(plan.files_unchanged)}")
+            print(f"  deleted:        {len(plan.files_deleted)}")
+        return 0
+
+    if not args.json:
+        print(f"Indexing {plan.root}")
+
+    try:
+        result = rag_pipeline.execute_plan(plan, cfg=cfg)
+    except RuntimeError as e:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    if args.no_register:
+        rag_store_mod.unregister_store(plan.root)
+
+    if args.json:
+        print(json.dumps({
+            "ok": True,
+            "root": str(plan.root),
+            "chunks_added": result.chunks_added,
+            "chunks_removed": result.chunks_removed,
+            "code_chunks_total": result.code_chunks_total,
+            "prose_chunks_total": result.prose_chunks_total,
+            "elapsed_seconds": round(result.elapsed_seconds, 2),
+        }, indent=2))
+    else:
+        print(f"\nindex updated:")
+        print(f"  chunks added:   {result.chunks_added}")
+        if result.chunks_removed:
+            print(f"  chunks removed: {result.chunks_removed}")
+        print(f"  code chunks:    {result.code_chunks_total}")
+        print(f"  prose chunks:   {result.prose_chunks_total}")
+        print(f"  elapsed:        {result.elapsed_seconds:.1f}s")
+        print()
+        print(f"Try: hydra-llm query \"<text>\" --in {plan.root}")
+        print(f"     hydra-llm chat <model> --rag {plan.root}")
+    return 0
+
+
+def cmd_query(args):
+    cfg = cfg_mod.load_user_config()
+    try:
+        from . import rag_pipeline
+    except ImportError as e:
+        msg = (f"RAG pipeline import failed: {e}. "
+               "Install missing deps: pip install --user pathspec numpy lancedb")
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+    try:
+        results = rag_pipeline.retrieve(
+            Path(args.in_path),
+            args.text,
+            top_k=args.top_k,
+            cfg=cfg,
+            code_only=args.code_only,
+            prose_only=args.prose_only,
+        )
+    except RuntimeError as e:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps({"ok": True, "results": results}, indent=2))
+        return 0
+    if not results:
+        print("(no results)")
+        return 0
+    print(f"Top {len(results)} results from {Path(args.in_path).resolve()}:")
+    for i, r in enumerate(results, 1):
+        kinds = ",".join(r.get("kinds", []))
+        score = r.get("rrf", 0.0)
+        line_range = f"{r.get('line_start')}-{r.get('line_end')}"
+        print(f"\n{i}. [rrf {score:.4f}, {kinds}]  {r.get('rel_path')}:{line_range}")
+        snippet = (r.get("text") or "").strip().splitlines()
+        for line in snippet[:8]:
+            print(f"     {line[:100]}")
+        if len(snippet) > 8:
+            print(f"     ... ({len(snippet) - 8} more lines)")
     return 0
 
 
