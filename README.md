@@ -2,11 +2,11 @@
 
 **Docker for language models. Plus retrieval, baked in.**
 
-One CLI to download, run, chat with, and search local LLMs. Curated GGUF catalog. OpenAI-compatible endpoints on stable local ports. Built-in RAG over any folder you point it at — code, docs, projects, the lot. Bundle a model + a persona + a corpus into a single alias and chat with it by name. No cloud, no API key, no telemetry.
+One CLI to download, run, chat with, and search local LLMs. Curated GGUF catalog. OpenAI-compatible endpoints on stable local ports. Built-in RAG over any folder you point it at: code, docs, projects, the lot. Bundle a model, a persona, and a corpus into a single alias and chat with it by name. No cloud, no API key, no telemetry.
 
 > ## Disclaimer / no warranty
 >
-> This software runs large language models on your machine, manages Docker containers on your behalf, downloads multi-gigabyte model files from third-party hosts (primarily Hugging Face community mirrors), exposes HTTP APIs on local ports, and — when you use the RAG features — reads files inside any folder you index and stores embeddings of them on disk. It is provided **as is, without warranty of any kind**, express or implied, including but not limited to merchantability, fitness for a particular purpose, and noninfringement.
+> This software runs large language models on your machine, manages Docker containers on your behalf, downloads multi-gigabyte model files from third-party hosts (primarily Hugging Face community mirrors), exposes HTTP APIs on local ports, and (when you use the RAG features) reads files inside any folder you index and stores embeddings of them on disk. It is provided **as is, without warranty of any kind**, express or implied, including but not limited to merchantability, fitness for a particular purpose, and noninfringement.
 >
 > By installing or running this software you accept that:
 >
@@ -168,7 +168,7 @@ hydra-llm index . --dry-run          # print plan, don't embed
 
 The walker uses `.gitignore` (via `python-pathspec`) plus a builtin blacklist (`node_modules`, `.venv`, `target`, `build`, lockfiles, binaries, archives, media, weights, files >1 MB). Each file is classified *code* or *prose* by extension first (`.py`, `.sh`, `.md`, `.rst`, ...), then by canonical basenames (`Makefile`, `Dockerfile`, `README`, `LICENSE`), then by shebang sniff. Code goes to a code embedder; prose to a prose embedder. The chunker is line-aware (1500 chars target, 200 overlap, never splits mid-line).
 
-Each indexed folder grows a `.hydra-index/` with two LanceDB tables (`code.lance`, `prose.lance`), a `meta.yaml` recording which embedders the index was built with, and a `files.json` that drives incremental refresh. The `.hydra-index/` moves with the folder — copy a project to another machine, the index comes along.
+Each indexed folder grows a `.hydra-index/` with two LanceDB tables (`code.lance`, `prose.lance`), a `meta.yaml` recording which embedders the index was built with, and a `files.json` that drives incremental refresh. The `.hydra-index/` moves with the folder: copy a project to another machine, the index comes along.
 
 ### 3. Query the index
 
@@ -181,7 +181,7 @@ hydra-llm query "..." --all               # federated across every indexed folde
 
 Default scope: if cwd has a `.hydra-index/`, query just that store. Otherwise, query every registered store (federated). Override with `--in`, `--stores`, or `--tag`.
 
-Behind the scenes: the question is embedded with *both* embedders, top-K hits come back from each table, and the lists are fused by Reciprocal Rank Fusion (`k=60`). This is the 2026 best practice for code+prose corpora — it avoids the failure mode where a code embedder mangles README prose, while still surfacing the right code blocks first.
+Behind the scenes: the question is embedded with *both* embedders, top-K hits come back from each table, and the lists are fused by Reciprocal Rank Fusion (`k=60`). This is the 2026 best practice for code+prose corpora; it avoids the failure mode where a code embedder mangles README prose, while still surfacing the right code blocks first.
 
 ### 4. Chat with retrieval
 
