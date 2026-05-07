@@ -338,18 +338,24 @@ def main():
     pp.set_defaults(func=cmd_rag_stores)
 
     pp = rag_sub.add_parser(
-        "setup", help="first-run: pick + download recommended embedders",
+        "setup", help="first-run: pick + download an embedder",
         parents=[json_parent],
         description=(
-            "Detects your hardware tier, suggests the recommended code and "
-            "prose embedders for it, and downloads them after a yes/no "
-            "prompt. Use --non-interactive to install the recommended pair "
-            "without prompting (suitable for scripting or CI)."
+            "Detects your hardware tier and recommends the best embedder "
+            "for it. The default mode installs one embedder that handles "
+            "both code and prose. Pass --dual to install a code embedder "
+            "and a separate prose embedder; that mode pays off on very "
+            "large mixed corpora and is opt-in via this flag or "
+            "rag.dual_index in config.yaml.\n\n"
+            "Use --non-interactive to install without prompting (suitable "
+            "for scripting or CI)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pp.add_argument("--non-interactive", action="store_true",
-                    help="install the recommended pair without prompting")
+                    help="install without prompting")
+    pp.add_argument("--dual", action="store_true",
+                    help="install both a code and a prose embedder (dual-index mode)")
     pp.add_argument("--code-embedder", help="override the recommended code embedder id")
     pp.add_argument("--prose-embedder", help="override the recommended prose embedder id")
     pp.set_defaults(func=cmd_rag_setup)
@@ -2064,29 +2070,48 @@ def cmd_rag_setup(args):
     cfg = cfg_mod.load_user_config()
     snap = hardware.system_snapshot()
     tier = hardware.detect_tier(snap)
-    catalog, _ = rag_cat_mod.load_embedder_catalog()
 
-    # Resolve picks.
-    code_e = None
-    prose_e = None
-    if args.code_embedder:
-        code_e = rag_cat_mod.find_embedder(args.code_embedder)
-        if not code_e:
+    rag_section = cfg.get("rag") if isinstance(cfg.get("rag"), dict) else {}
+    dual_default = bool(rag_section.get("dual_index", False))
+    dual = bool(args.dual or dual_default)
+
+    rec_code, rec_prose = _recommend_embedders(cfg)
+
+    # Resolve embedders:
+    #   single-mode picks one (the recommended code embedder; it handles
+    #   prose acceptably and is the strongest pick at every tier where one
+    #   exists).
+    #   dual-mode picks both.
+    if dual:
+        code_e = (rag_cat_mod.find_embedder(args.code_embedder)
+                  if args.code_embedder else rec_code)
+        prose_e = (rag_cat_mod.find_embedder(args.prose_embedder)
+                   if args.prose_embedder else rec_prose)
+        if args.code_embedder and not code_e:
             print(f"error: unknown code embedder: {args.code_embedder}", file=sys.stderr)
             return 1
-    if args.prose_embedder:
-        prose_e = rag_cat_mod.find_embedder(args.prose_embedder)
-        if not prose_e:
+        if args.prose_embedder and not prose_e:
             print(f"error: unknown prose embedder: {args.prose_embedder}", file=sys.stderr)
             return 1
-    if code_e is None or prose_e is None:
-        rec_code, rec_prose = _recommend_embedders(cfg)
-        if code_e is None:
-            code_e = rec_code
-        if prose_e is None:
-            prose_e = rec_prose
+        chosen = [e for e in (code_e, prose_e) if e]
+    else:
+        # Single mode: --code-embedder wins, then --prose-embedder, else
+        # the recommended code embedder.
+        if args.code_embedder:
+            single_e = rag_cat_mod.find_embedder(args.code_embedder)
+            if not single_e:
+                print(f"error: unknown embedder: {args.code_embedder}", file=sys.stderr)
+                return 1
+        elif args.prose_embedder:
+            single_e = rag_cat_mod.find_embedder(args.prose_embedder)
+            if not single_e:
+                print(f"error: unknown embedder: {args.prose_embedder}", file=sys.stderr)
+                return 1
+        else:
+            single_e = rec_code or rec_prose
+        chosen = [single_e] if single_e else []
 
-    if code_e is None and prose_e is None:
+    if not chosen:
         msg = (f"no embedders are tagged for tier '{tier['id']}'. "
                f"Run `hydra-llm rag list-online --all` to see everything.")
         if args.json:
@@ -2095,24 +2120,23 @@ def cmd_rag_setup(args):
             print(f"error: {msg}", file=sys.stderr)
         return 1
 
-    to_install = []
+    # Dedup and split into already-installed vs to-install.
     seen_ids = set()
-    for e in (code_e, prose_e):
-        if e and e["id"] not in seen_ids:
+    distinct = []
+    for e in chosen:
+        if e["id"] not in seen_ids:
             seen_ids.add(e["id"])
-            if not rag_cat_mod.is_downloaded(e, cfg):
-                to_install.append(e)
+            distinct.append(e)
+    to_install = [e for e in distinct if not rag_cat_mod.is_downloaded(e, cfg)]
 
     if args.json:
         print(json.dumps({
             "ok": True,
+            "mode": "dual" if dual else "single",
             "tier": tier["id"],
-            "code_embedder": code_e["id"] if code_e else None,
-            "prose_embedder": prose_e["id"] if prose_e else None,
+            "embedders": [e["id"] for e in distinct],
             "to_install": [e["id"] for e in to_install],
         }, indent=2))
-        # In --json mode we still install (it's the documented effect of
-        # `rag setup`); skip prompting.
         if to_install:
             for e in to_install:
                 args_force = type("a", (), {"alias": e["id"], "force": False, "json": True})
@@ -2122,14 +2146,28 @@ def cmd_rag_setup(args):
         return 0
 
     print(f"hydra-llm RAG setup\n")
-    print(f"Detected hardware tier: {tier['id']}  ({tier['name']})\n")
-    print(f"Recommended embedders for your tier:")
-    if code_e:
-        installed = "(already installed)" if rag_cat_mod.is_downloaded(code_e, cfg) else ""
-        print(f"  code:  {code_e['id']:<22} {code_e.get('size_gb', '?')} GB  {installed}")
-    if prose_e and (not code_e or prose_e['id'] != code_e['id']):
-        installed = "(already installed)" if rag_cat_mod.is_downloaded(prose_e, cfg) else ""
-        print(f"  prose: {prose_e['id']:<22} {prose_e.get('size_gb', '?')} GB  {installed}")
+    print(f"Detected hardware tier: {tier['id']}  ({tier['name']})")
+    print(f"Mode: {'dual-index (code + prose embedders)' if dual else 'single-embedder'}\n")
+    if dual:
+        print(f"Recommended embedders for your tier:")
+        for label, e in (("code", chosen[0] if chosen else None),
+                         ("prose", chosen[1] if len(chosen) > 1 else None)):
+            if not e:
+                continue
+            installed = "(already installed)" if rag_cat_mod.is_downloaded(e, cfg) else ""
+            print(f"  {label:<6} {e['id']:<22} {e.get('size_gb', '?')} GB  {installed}")
+        print()
+        print("Switch back to single-embedder mode with: hydra-llm rag setup")
+    else:
+        e = chosen[0]
+        installed = "(already installed)" if rag_cat_mod.is_downloaded(e, cfg) else ""
+        print(f"Recommended embedder: {e['id']}  ({e.get('size_gb', '?')} GB)  {installed}")
+        notes = (e.get('notes') or '').strip().splitlines()
+        if notes:
+            print(f"  {notes[0][:78]}")
+        print()
+        print("Want a separate code embedder + prose embedder fused at query time?")
+        print("Re-run with: hydra-llm rag setup --dual")
 
     if not to_install:
         print(f"\nAll recommended embedders are already installed. RAG is ready.")
