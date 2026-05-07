@@ -32,6 +32,25 @@ Three answers, in increasing order of "you didn't know you wanted that":
 
 If you've used Ollama, this will feel familiar. The differences: no modelfiles to write, runs in plain Docker (no opaque background daemon), exposes the same OpenAI endpoint shape, and ships a real KDE panel widget. And it has retrieval. Ollama doesn't.
 
+## Why Docker
+
+Every model server (chat or embedder) runs in its own Docker container. The reasons:
+
+- **No host pollution.** The llama.cpp engine, its CUDA/Vulkan runtime, and every model live inside a container. Nothing gets installed on your host beyond the `hydra-llm` CLI itself and a Python or two.
+- **Trivial removal.** `sudo apt remove hydra-llm` uninstalls the CLI. `hydra-llm wipe` additionally tears down the engine image, every cached model, every embedder, and every chat session. Your host is back to where it started.
+- **Reproducibility.** The same image runs the same way on a Strix iGPU laptop, a workstation with a discrete GPU, a NUC, or an Apple Silicon Mac via Docker Desktop. Two engine variants ship: Vulkan for GPU-equipped boxes and a plain CPU build for everything else; the right one is auto-selected per machine.
+- **Inspectable.** `docker ps` tells you exactly which models are running and on which port. `docker logs hydra-<alias>` gives you the raw llama-server output. No background daemon hiding state behind an opaque API.
+- **Per-model isolation.** Two models running side by side cannot interfere with each other's address space or file handles; they are separate processes in separate containers. Killing one never destabilises another.
+
+## Where it runs
+
+hydra-llm targets Linux first (Debian, Ubuntu, Fedora, Arch, etc.) but the architecture is portable wherever Docker runs:
+
+- **Linux:** primary target. `.deb` for Debian/Ubuntu derivatives; the bash one-liner installer works on every distro with bash + Docker.
+- **WSL2 on Windows:** works. Run hydra-llm inside an Ubuntu WSL distro with Docker Desktop integrated, or with the native `docker.io` package inside the WSL distro itself. The Vulkan engine uses WSLg's GPU passthrough on supported hardware; otherwise the CPU engine is used. The KDE Plasma widget needs Plasma 6, so it does not apply on Windows desktops; the CLI works fully.
+- **macOS:** CLI runs under Docker Desktop. The Vulkan engine variant does not apply on Apple Silicon (use the CPU engine, which still benefits from Apple's accelerators inside Docker's HVF layer); model speeds are competitive on M-series Pro/Max chips.
+- **Headless servers:** the CLI is the only surface needed. The Plasma widget and other GUI hooks degrade gracefully; nothing blocks on a missing display.
+
 ## What you actually get
 
 - **Stable OpenAI-compatible endpoints.** Every running model exposes `POST /v1/chat/completions` on its own local port from your `port_range`. Point Aider, Continue.dev, Open Interpreter, [lillycoder](https://ra-yavuz.github.io/lillycoder/), or your own scripts at `http://localhost:18080/v1` and rotate which model is behind that port with `hydra-llm stop A && start B`. No client config changes, no API keys.
@@ -44,22 +63,40 @@ If you've used Ollama, this will feel familiar. The differences: no modelfiles t
 
 ## Quick start
 
-### 1. Add the apt repo (one time)
+### 1. Install (Debian / Ubuntu)
+
+One line. Sets up the signed apt repo if not already added, refreshes the package index, and installs hydra-llm. Idempotent, safe to re-run:
 
 ```sh
+sudo bash -c 'set -e; install -m 0755 -d /etc/apt/keyrings && curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg -o /etc/apt/keyrings/ra-yavuz.gpg && echo "deb [signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" > /etc/apt/sources.list.d/ra-yavuz.list && apt update && apt install -y hydra-llm'
+```
+
+On KDE, also install the panel widget:
+
+```sh
+sudo apt update && sudo apt install hydra-llm-plasma
+```
+
+If you already have the `ra-yavuz` apt repo, the `apt update` step above is still required: without it apt will not see new packages or new versions.
+
+<details><summary>Step by step (manual repo setup)</summary>
+
+```sh
+# 1. Trust the signing key
 sudo install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg \
   | sudo tee /etc/apt/keyrings/ra-yavuz.gpg >/dev/null
+
+# 2. Add the apt source
 echo "deb [signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/ra-yavuz.list
+
+# 3. Refresh the package index, then install
 sudo apt update
-```
-
-### 2. Install
-
-```sh
 sudo apt install hydra-llm                  # add `hydra-llm-plasma` if on KDE
 ```
+
+</details>
 
 hydra-llm runs every model in a Docker container. If `docker ps` errors with permission denied:
 
@@ -68,14 +105,14 @@ sudo apt install docker.io
 sudo usermod -aG docker "$USER"   # log out / back in for the group to take effect
 ```
 
-### 3. First-run setup
+### 2. First-run setup
 
 ```sh
 hydra-llm doctor          # detect your hardware tier
 hydra-llm setup           # build engine image (5-10 min) + tiny starter model + smoke test
 ```
 
-### 4. Pick and run a model
+### 3. Pick and run a model
 
 ```sh
 hydra-llm list-online            # filtered to what your hardware can run
