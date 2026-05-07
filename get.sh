@@ -100,11 +100,39 @@ if ! python3 -c "import yaml" 2>/dev/null; then
     fi
 fi
 
-# Docker is checked but not auto-installed (its setup involves user groups).
+# Docker is the engine hydra-llm runs every model in. It is required at
+# runtime; we offer to apt-install on Debian/Ubuntu, otherwise point at
+# upstream docs. We do *not* auto-add the user to the docker group: that
+# requires a logout/login to take effect, which we can't do from this
+# script, so the user has to do it themselves.
 if ! command -v docker >/dev/null 2>&1; then
-    warn "docker is not installed."
-    warn "Install it (https://docs.docker.com/engine/install/), add yourself to the 'docker' group, then run:"
-    warn "    hydra-llm setup"
+    warn "docker is not installed; hydra-llm needs it to run models."
+    if command -v apt-get >/dev/null 2>&1; then
+        note "I can install it now via:  sudo apt-get install -y docker.io"
+        if [ -t 0 ]; then
+            read -rp "    Install docker.io now? [Y/n] " ans
+            ans=${ans:-y}
+        else
+            ans=y
+        fi
+        case "${ans,,}" in
+            y|yes)
+                sudo apt-get install -y docker.io || \
+                    warn "apt-get install docker.io failed; install manually"
+                ;;
+            *)
+                warn "skipping docker install. After installing it later, run:  hydra-llm setup"
+                ;;
+        esac
+        if command -v docker >/dev/null 2>&1; then
+            note "After install, add yourself to the docker group, then log out and back in:"
+            note "    sudo usermod -aG docker \"\$USER\""
+            note "Without that, every docker command needs sudo and the engine container will not start as your user."
+        fi
+    else
+        warn "Install Docker (https://docs.docker.com/engine/install/), add yourself to the 'docker' group, then run:"
+        warn "    hydra-llm setup"
+    fi
     note "Continuing the install of hydra-llm itself."
 fi
 
