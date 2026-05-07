@@ -1,8 +1,8 @@
 # hydra-llm
 
-**Docker for language models. Plus retrieval, baked in.**
+**Docker for language models, with retrieval baked in.**
 
-One CLI to download, run, chat with, and search local LLMs. Curated GGUF catalog. OpenAI-compatible endpoints on stable local ports. Built-in RAG over any folder you point it at: code, docs, projects, the lot. Bundle a model, a persona, and a corpus into a single alias and chat with it by name. No cloud, no API key, no telemetry.
+One CLI to download, run, chat with, and search local LLMs. Each model runs in its own Docker container over llama.cpp, so `docker ps` shows you exactly what is running and on which port. The CLI ships a hardware-aware curated catalog of community GGUFs that download anonymously (no Hugging Face token required), exposes OpenAI-compatible endpoints on stable local ports, and treats retrieval-augmented generation as a first-class feature: `hydra-llm index <path>`, `hydra-llm query "..."`, and `hydra-llm chat <model> --rag <path>`. With `hydra-llm create` you can bake a model, a persona, and a corpus into one alias and chat with it by name. Optional KDE Plasma 6 panel widget. No cloud, no API key, no telemetry.
 
 > ## Disclaimer / no warranty
 >
