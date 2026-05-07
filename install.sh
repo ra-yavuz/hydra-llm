@@ -63,6 +63,27 @@ if ! python3 -c "import yaml" 2>/dev/null; then
     fi
 fi
 
+# RAG dependencies (only needed if the user runs index/query/chat --rag).
+# Installed eagerly so the first `hydra-llm index` doesn't bail with an
+# ImportError. pathspec (.gitignore parser) and numpy are tiny; lancedb is
+# the storage backend and pulls in a Rust-backed wheel ~50 MB.
+for dep_pkg in "pathspec:pathspec" "numpy:numpy" "lancedb:lancedb"; do
+    pyname="${dep_pkg%%:*}"
+    pipname="${dep_pkg##*:}"
+    if ! python3 -c "import $pyname" 2>/dev/null; then
+        echo "==> Installing $pipname (Python dependency for RAG)"
+        if pip install --user --quiet "$pipname" 2>/dev/null; then
+            :
+        elif pip install --user --break-system-packages --quiet "$pipname" 2>/dev/null; then
+            :
+        else
+            echo "    warn: could not install $pipname automatically"
+            echo "          RAG features (hydra-llm index/query) will be disabled"
+            echo "          install manually:  pip install --user $pipname"
+        fi
+    fi
+done
+
 if [ "$SKIP_SETUP" = "1" ]; then
     echo "==> --skip-setup given, stopping here."
     echo "    Run 'hydra-llm setup' when you're ready to build the image and"
