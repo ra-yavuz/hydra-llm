@@ -1,3 +1,44 @@
+hydra-llm (0.2.3-1) unstable; urgency=low
+
+  * Quality-of-life pass on the chat and rag-setup flows after first
+    real-user friction.
+  * `hydra-llm chat` (no alias) now resolves smartly:
+    - exactly one model running -> attach silently and announce which
+    - several running -> list with port numbers, prompt for a number
+    - none running but exactly one downloaded -> auto-attach (chat
+      path will start it)
+    - none running, several downloaded -> list with size, prompt
+    - nothing downloaded -> list-online hint and exit
+    The alias positional is now optional.
+  * Default chat session file is now scoped to (cwd, alias) instead
+    of a single global ~/.local/state/hydra-llm/sessions/default.json.
+    Previously a chat in folder A would resume history from folder B
+    (or worse: from a smoke test on another machine if the state dir
+    was reused). New default path:
+        ~/.local/state/hydra-llm/sessions/<sha1(cwd)[:12]>-<alias>.json
+    Existing flags still work: --session foo for cross-folder global
+    sessions, ./chat.json positional for arbitrary paths.
+  * `hydra-llm rag setup` (single mode) presents a numbered menu when
+    the recommended embedder for the user's tier is not installed but
+    others are. Previously setup ignored already-installed embedders
+    and pushed the user into a 2.5 GB download. Now:
+        1. Download recommended (<id>, <size> GB)
+        2. Use already-installed <id> (<kind>)         per installed
+        N. Pick a different embedder from the catalog
+        N+1. Cancel; do nothing
+    Picking option 2 writes rag.default_code_embedder + default_prose_
+    embedder so subsequent `hydra-llm index` calls auto-pick it.
+  * `rag setup` output explains, in plain English, what dual-index
+    mode is, why most users should not enable it, how to switch it on
+    later, and that switching modes requires re-indexing existing
+    folders. The text reads like a person wrote it.
+  * README + project page gain a "What is an embedder" subsection and
+    a "Single-embedder vs dual-index mode" subsection. The dual-mode
+    trade-off is named honestly. The walk-through example shows the
+    new numbered menu instead of the obsolete "Download both? [Y/n]".
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Thu, 07 May 2026 13:00:00 +0000
+
 hydra-llm (0.2.2-1) unstable; urgency=low
 
   * hydra-llm-plasma: relax Depends so the plasmoid installs on every
