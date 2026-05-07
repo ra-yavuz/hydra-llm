@@ -50,11 +50,11 @@ Description: run local LLMs the easy way (CLI)
 Package: hydra-llm-plasma
 Architecture: all
 Depends: ${misc:Depends},
-         hydra-llm (>= ${binary:Version}),
-         plasma-workspace (>= 6.0),
-         qml6-module-qtquick-controls,
-         qml6-module-org-kde-kirigami,
-         qml6-module-org-kde-plasma-components
+         hydra-llm (>= ${binary:Version})
+Recommends: plasma-workspace (>= 6.0),
+            qml6-module-qtquick-controls,
+            qml6-module-org-kde-kirigami,
+            qml6-module-org-kde-plasma-components
 Description: KDE Plasma 6 panel widget for hydra-llm
  A panel widget that lets you start, stop, and chat with local LLM model
  servers managed by hydra-llm. Features:

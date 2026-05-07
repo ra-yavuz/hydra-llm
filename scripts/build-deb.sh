@@ -106,7 +106,8 @@ Version: ${VERSION}
 Section: kde
 Priority: optional
 Architecture: all
-Depends: hydra-llm (>= ${VERSION}), plasma-workspace (>= 6.0), qml6-module-qtquick-controls, qml6-module-org-kde-kirigami, qml6-module-org-kde-plasma-components
+Depends: hydra-llm (>= ${VERSION})
+Recommends: plasma-workspace (>= 6.0), qml6-module-qtquick-controls, qml6-module-org-kde-kirigami, qml6-module-org-kde-plasma-components
 Maintainer: Ramazan Yavuz <yavuzramazan1994@gmail.com>
 Homepage: https://github.com/ra-yavuz/hydra-llm
 Description: KDE Plasma 6 panel widget for hydra-llm

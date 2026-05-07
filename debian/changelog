@@ -1,3 +1,20 @@
+hydra-llm (0.2.2-1) unstable; urgency=low
+
+  * hydra-llm-plasma: relax Depends so the plasmoid installs on every
+    Plasma 6 system regardless of how distros name their QML6 modules.
+    Previously the plasmoid hard-required
+    qml6-module-org-kde-plasma-components by that exact Debian-style
+    name, which Ubuntu 26.04 (resolute) does not ship; apt would
+    refuse the whole transaction. Now: only hydra-llm itself is a
+    Depends; QML modules and plasma-workspace are Recommends, so a
+    missing module causes graceful runtime degradation instead of an
+    install-time refusal.
+  * Net effect: `apt upgrade` no longer rolls back the CLI upgrade
+    just because the plasmoid couldn't be solved on the user's
+    distro. The CLI is the main thing; the plasmoid is optional.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Thu, 07 May 2026 12:30:00 +0000
+
 hydra-llm (0.2.1-1) unstable; urgency=low
 
   * RAG mode flip: single-embedder is now the default for `hydra-llm
