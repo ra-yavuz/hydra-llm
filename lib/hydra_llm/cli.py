@@ -1392,11 +1392,16 @@ def cmd_rag_list(args):
     cfg = cfg_mod.load_user_config()
     catalog, _ = rag_cat_mod.load_embedder_catalog()
     installed = [e for e in catalog if rag_cat_mod.is_downloaded(e, cfg)]
+    running, _ = docker_driver.list_running_embedders(cfg)
+    by_alias = {r["alias"]: r for r in running if r.get("state") == "running"}
     if args.json:
         print(json.dumps({
             "ok": True,
             "embedders": [
-                {**e, "path": str(rag_cat_mod.embedder_path(e, cfg))}
+                {**e,
+                 "path": str(rag_cat_mod.embedder_path(e, cfg)),
+                 "running": e["id"] in by_alias,
+                 "port": by_alias.get(e["id"], {}).get("port")}
                 for e in installed
             ],
         }, indent=2))
@@ -1406,11 +1411,16 @@ def cmd_rag_list(args):
         print("Run `hydra-llm rag list-online` to see what's available,")
         print("then `hydra-llm rag download <id>` to install one.")
         return 0
-    print(f"{'ID':<22} {'KIND':<6} {'DIMS':<6} {'SIZE':<7} NAME")
+    print(f"{'ID':<22} {'KIND':<6} {'DIMS':<6} {'SIZE':<8} {'STATUS':<22} NAME")
     for e in installed:
         size = f"{e.get('size_gb', '?')} GB"
+        running_info = by_alias.get(e["id"])
+        if running_info:
+            status = f"running on :{running_info.get('port', '?')}"
+        else:
+            status = "idle"
         print(f"{e['id']:<22} {e.get('kind', '?'):<6} "
-              f"{str(e.get('dimensions', '?')):<6} {size:<7} "
+              f"{str(e.get('dimensions', '?')):<6} {size:<8} {status:<22} "
               f"{e.get('name', e['id'])}")
     return 0
 
@@ -1474,8 +1484,16 @@ def cmd_rag_info(args):
             print(f"error: {msg}", file=sys.stderr)
         return 1
     p = rag_cat_mod.embedder_path(entry, cfg)
+    running, _ = docker_driver.list_running_embedders(cfg)
+    running_info = next((r for r in running
+                         if r["alias"] == entry["id"] and r.get("state") == "running"),
+                        None)
     if args.json:
-        out = {**entry, "path": str(p), "installed": p.is_file()}
+        out = {**entry,
+               "path": str(p),
+               "installed": p.is_file(),
+               "running": running_info is not None,
+               "port": running_info.get("port") if running_info else None}
         print(json.dumps(out, indent=2))
         return 0
     print(f"id:              {entry['id']}")
@@ -1493,6 +1511,10 @@ def cmd_rag_info(args):
     print(f"license:         {entry.get('license', '?')}")
     print(f"file:            {p}")
     print(f"installed:       {'yes' if p.is_file() else 'no'}")
+    if running_info:
+        print(f"running:         yes, on :{running_info.get('port', '?')}")
+    else:
+        print(f"running:         no")
     if entry.get("notes"):
         print(f"\n{entry['notes']}")
     return 0

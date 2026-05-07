@@ -285,3 +285,170 @@ def _resolve_image(cfg) -> str:
 def image_tag(variant: str) -> str:
     """Local image tag we expect to exist after install/build. The install script builds these."""
     return f"hydra-llm/llama-server:{variant}"
+
+
+# --- embedder sidecars ----------------------------------------------------------
+#
+# Embedders are llama-server containers run with --embeddings, on a dedicated
+# port range (default 19080..19099) so they coexist with chat-model containers
+# (default 18080..18099). Treated as sidecars rather than catalog-listed chat
+# models: they don't show up in `hydra-llm list` or `hydra-llm status`, only
+# under `hydra-llm rag list` / `hydra-llm rag info`.
+
+def list_running_embedders(cfg=None):
+    """List embedder sidecars hydra manages. Same shape as list_running()."""
+    if cfg is None:
+        cfg = cfg_mod.load_user_config()
+    prefix = cfg.get("embedder_container_prefix", "hydra-embed-")
+    if not docker_available():
+        return [], "docker not installed"
+    try:
+        out = subprocess.run(
+            ["docker", "ps", "-a",
+             "--filter", f"name=^{prefix}",
+             "--format", "{{.Names}}\t{{.State}}\t{{.Ports}}\t{{.Status}}\t{{.CreatedAt}}"],
+            capture_output=True, text=True, check=True, timeout=5,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return [], f"docker ps failed: {e}"
+    rows = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        name, state, ports, status, created = parts
+        alias = name[len(prefix):]
+        port = None
+        m = re.search(r":(\d+)->8081/tcp", ports)
+        if m:
+            port = int(m.group(1))
+        rows.append({
+            "alias": alias,
+            "container": name,
+            "state": state,
+            "port": port,
+            "status": status,
+            "created": created,
+        })
+    return rows, None
+
+
+def start_embedder(embedder_entry, cfg=None, port=None):
+    """Start a llama-server container in --embeddings mode for the given
+    embedder catalog entry. Idempotent: returns the existing container if one
+    is already running for this id.
+    """
+    if cfg is None:
+        cfg = cfg_mod.load_user_config()
+    if not docker_available():
+        return False, {"error": "docker is not installed"}
+
+    alias = embedder_entry["id"]
+    prefix = cfg.get("embedder_container_prefix", "hydra-embed-")
+    name = _container_name(prefix, alias)
+
+    rows, _ = list_running_embedders(cfg)
+    existing = next((r for r in rows if r["container"] == name), None)
+    if existing and existing.get("state") == "running":
+        return True, {"already_running": True, "container": name,
+                      "port": existing.get("port")}
+    if existing:
+        subprocess.run(["docker", "rm", "-f", name],
+                       capture_output=True, text=True, timeout=10)
+
+    used_ports = {r["port"] for r in rows if r["port"] and r["container"] != name}
+    port_range = cfg.get("embedder_port_range", [19080, 19099])
+    if port is None:
+        port = embedder_entry.get("default_port")
+    if not port or port in used_ports:
+        port = find_free_port(used_ports, *port_range)
+        if not port:
+            return False, {"error": "no free port in embedder_port_range"}
+
+    gpu_layers = embedder_entry.get("gpu_layers", 99)
+    gguf_filename = embedder_entry["filename"]
+    embedders_dir = cfg.get("embedders_dir") or str(paths.EMBEDDERS_DIR_DEFAULT)
+
+    image = _resolve_image(cfg)
+    cmd = [
+        "docker", "run", "-d",
+        "--name", name,
+        "-p", f"{port}:8081",
+        "-v", f"{embedders_dir}:/models:ro",
+    ]
+    if image == "vulkan":
+        cmd += ["--device", "/dev/dri"]
+    cmd += [
+        image_tag(image),
+        "--model", f"/models/{gguf_filename}",
+        "--n-gpu-layers", str(gpu_layers),
+        "--host", "0.0.0.0",
+        "--port", "8081",
+        "--log-disable",
+        "--embeddings",
+    ]
+    pooling = embedder_entry.get("pooling")
+    if pooling and pooling != "none":
+        cmd += ["--pooling", pooling]
+    # Carry max_tokens into context size if supplied.
+    max_tokens = embedder_entry.get("max_tokens")
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        cmd += ["--ctx-size", str(max_tokens)]
+
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+    except subprocess.CalledProcessError as e:
+        return False, {"error": f"docker run failed: {e.stderr.strip()}"}
+    return True, {"container": name, "port": port, "image": image}
+
+
+def stop_embedder(alias: str, cfg=None):
+    """Stop and remove the embedder sidecar for the given embedder id."""
+    if cfg is None:
+        cfg = cfg_mod.load_user_config()
+    prefix = cfg.get("embedder_container_prefix", "hydra-embed-")
+    name = _container_name(prefix, alias)
+    try:
+        subprocess.run(["docker", "rm", "-f", name],
+                       capture_output=True, text=True, check=True, timeout=15)
+    except subprocess.CalledProcessError as e:
+        return False, e.stderr.strip()
+    return True, name
+
+
+def stop_all_embedders(cfg=None):
+    if cfg is None:
+        cfg = cfg_mod.load_user_config()
+    rows, err = list_running_embedders(cfg)
+    if err:
+        return False, err, []
+    if not rows:
+        return True, None, []
+    names = [r["container"] for r in rows]
+    try:
+        subprocess.run(["docker", "rm", "-f", *names],
+                       capture_output=True, text=True, check=True, timeout=30)
+    except subprocess.CalledProcessError as e:
+        return False, e.stderr.strip(), []
+    return True, None, names
+
+
+def ensure_embedder_running(embedder_entry, cfg=None, wait_timeout=60.0):
+    """Idempotent helper: start the embedder if it isn't running, then wait
+    for /health to come up. Returns (ok, info) where info has .container,
+    .port, and on failure .error and .logs.
+    """
+    if cfg is None:
+        cfg = cfg_mod.load_user_config()
+    ok, info = start_embedder(embedder_entry, cfg)
+    if not ok:
+        return False, info
+    name = info["container"]
+    port = info["port"]
+    if info.get("already_running") and probe_health(port):
+        return True, info
+    res = wait_for_ready(name, port, timeout=wait_timeout)
+    if res["state"] == "ready":
+        return True, info
+    return False, {"error": f"embedder did not become ready ({res['state']})",
+                   "container": name, "port": port, "logs": res.get("logs", "")}
