@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>hydra-llm — Run local LLMs and RAG over your stuff. Declarative. Transparent. No cloud.</title>
+<title>hydra-llm: Run local LLMs and RAG over your stuff. Declarative. Transparent. No cloud.</title>
 <meta name="description" content="hydra-llm: Docker-native local LLM manager with built-in RAG. Curated GGUF catalog with anonymous downloads, OpenAI-compatible endpoints, hardware-aware filtering, KDE Plasma panel widget, model+persona+corpus bundles you can chat with by name. Like Ollama, but with retrieval baked in and simpler when you don't want to write modelfiles.">
 <meta name="author" content="Ramazan Yavuz">
 <meta name="keywords" content="hydra-llm, local llm, self-hosted ai, llama.cpp, gguf, ollama alternative, rag, retrieval augmented generation, local rag, embeddings, vector database, lancedb, code search, semantic search, kde plasma widget, plasmoid, openai compatible api, lillycoder, anonymous huggingface, strix point, strix halo, apple silicon, ramazan yavuz">
 <meta name="robots" content="index,follow">
 <link rel="canonical" href="https://ra-yavuz.github.io/hydra-llm/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="hydra-llm — Local LLMs and RAG, declarative and transparent">
-<meta property="og:description" content="One CLI plus a KDE panel widget to download, start, chat with, and monitor local LLMs — with retrieval-augmented generation built in. Index any folder; chat with retrieval; bundle a model + persona + corpus into one alias. No cloud, no API key, no telemetry.">
+<meta property="og:title" content="hydra-llm: Local LLMs and RAG, declarative and transparent">
+<meta property="og:description" content="One CLI plus a KDE panel widget to download, start, chat with, and monitor local LLMs, with retrieval-augmented generation built in. Index any folder; chat with retrieval; bundle a model + persona + corpus into one alias. No cloud, no API key, no telemetry.">
 <meta property="og:url" content="https://ra-yavuz.github.io/hydra-llm/">
 <meta property="og:site_name" content="ra-yavuz">
 <meta name="twitter:card" content="summary">
@@ -83,12 +83,12 @@
 
 <picture><source srcset="logo.webp" type="image/webp"><img class="brand" src="logo.png" alt="hydra-llm logo: a three-headed hydra between angle brackets"></picture>
 
-<h1>hydra-llm <span class="pill new">v0.2 — RAG</span></h1>
-<p class="tag">Docker for language models. Plus retrieval, baked in.</p>
-<p class="subtag">One CLI to download, run, chat with, and search local LLMs. Curated GGUF catalog. OpenAI-compatible endpoints on stable local ports. Built-in RAG over any folder you point it at — code, docs, projects, the lot. Bundle a model, a persona, and a corpus into a single alias and chat with it by name. No cloud, no API key, no telemetry.</p>
+<h1>hydra-llm <span class="pill new">v0.2.1 - RAG</span></h1>
+<p class="tag">Docker for language models, with retrieval baked in.</p>
+<p class="subtag">One CLI to download, run, chat with, and search local LLMs. Each model runs in its own Docker container, so <code>docker ps</code> shows what is actually running. Hardware-aware curated GGUF catalog with anonymous Hugging Face downloads. OpenAI-compatible endpoints on stable local ports. Retrieval-augmented generation is a first-class feature: index any folder, query it, or add <code>--rag &lt;path&gt;</code> to any chat. Bundle a model, a persona, and a corpus into a single alias via <code>hydra-llm create</code>, then chat with it by name. Optional KDE Plasma 6 panel widget. No cloud, no API key, no telemetry.</p>
 
 <div class="warn">
-  <strong>No warranty. Read this before installing.</strong> hydra-llm runs LLMs on your machine, manages Docker containers on your behalf, downloads multi-gigabyte model files from third-party hosts, exposes HTTP APIs on local ports, and — when you use the RAG features — reads files inside any folder you index and stores embeddings of them on disk. It is provided <strong>as is, without warranty of any kind</strong>, express or implied, including merchantability, fitness for a particular purpose, and noninfringement. The author is <strong>not liable</strong> for any damage to hardware, data, or system, or for the content of model output. LLM outputs are unreliable and must not be used for safety-critical decisions. Sustained high CPU/GPU utilisation can cause thermal throttling or hardware stress; monitor your machine. By installing or running this software you accept these terms. See the <a href="#disclaimer">full disclaimer</a> below and the <a href="https://github.com/ra-yavuz/hydra-llm/blob/main/LICENSE">LICENSE</a>.
+  <strong>No warranty. Read this before installing.</strong> hydra-llm runs LLMs on your machine, manages Docker containers on your behalf, downloads multi-gigabyte model files from third-party hosts, exposes HTTP APIs on local ports, and (when you use the RAG features) reads files inside any folder you index and stores embeddings of them on disk. It is provided <strong>as is, without warranty of any kind</strong>, express or implied, including merchantability, fitness for a particular purpose, and noninfringement. The author is <strong>not liable</strong> for any damage to hardware, data, or system, or for the content of model output. LLM outputs are unreliable and must not be used for safety-critical decisions. Sustained high CPU/GPU utilisation can cause thermal throttling or hardware stress; monitor your machine. By installing or running this software you accept these terms. See the <a href="#disclaimer">full disclaimer</a> below and the <a href="https://github.com/ra-yavuz/hydra-llm/blob/main/LICENSE">LICENSE</a>.
 </div>
 
 <h2>Why use this instead of plain Ollama or llama.cpp?</h2>
@@ -161,7 +161,7 @@ hydra-llm chat cool-app-bot             # no flags. retrieval just works.</code>
 
   <div class="card">
     <h3 style="margin-top:0">Hardware-aware curated catalog</h3>
-    <p><code>list-online</code> filters community GGUFs (Bartowski, lmstudio-community, mradermacher) to what your machine can run. Anonymous downloads — no HF account needed. Tiers cover 4 GB Pi-class up to 70B-on-iGPU Strix-class boxes.</p>
+    <p><code>list-online</code> filters community GGUFs (Bartowski, lmstudio-community, mradermacher) to what your machine can run. Anonymous downloads, no HF account needed. Tiers cover 4 GB Pi-class up to 70B-on-iGPU Strix-class boxes.</p>
   </div>
 
   <div class="card">
@@ -220,11 +220,11 @@ hydra-llm index . --dry-run          # print plan, don't embed</code></pre>
 
 <h3>3. Storage is per-folder LanceDB</h3>
 
-<p>Each indexed folder grows a <code>.hydra-index/</code> with two LanceDB tables (<code>code.lance</code>, <code>prose.lance</code>), a <code>meta.yaml</code> recording which embedders the index was built with, and a <code>files.json</code> that drives incremental refresh. The <code>.hydra-index/</code> moves with the folder — copy a project to another machine, the index comes along.</p>
+<p>Each indexed folder grows a <code>.hydra-index/</code> with two LanceDB tables (<code>code.lance</code>, <code>prose.lance</code>), a <code>meta.yaml</code> recording which embedders the index was built with, and a <code>files.json</code> that drives incremental refresh. The <code>.hydra-index/</code> moves with the folder: copy a project to another machine, the index comes along.</p>
 
 <h3>4. Retrieval uses Reciprocal Rank Fusion</h3>
 
-<p>At query time the question is embedded with <em>both</em> embedders, top-K hits come back from each table, and the lists are fused by RRF (<code>k=60</code>). This is the 2026 best practice for code+prose corpora — it avoids the failure mode where a code embedder mangles README prose, while still surfacing the right code blocks first.</p>
+<p>At query time the question is embedded with <em>both</em> embedders, top-K hits come back from each table, and the lists are fused by RRF (<code>k=60</code>). This is the 2026 best practice for code+prose corpora; it avoids the failure mode where a code embedder mangles README prose, while still surfacing the right code blocks first.</p>
 
 <pre><code>hydra-llm query "where do we handle auth tokens?" --in .
 hydra-llm query "..." --top-k 10 --code-only
@@ -398,7 +398,7 @@ hydra-llm wipe        # also deletes models, embedders, sessions, engine image</
 
 <h2 id="disclaimer">Full disclaimer</h2>
 
-<p>This software runs large language models on your machine, manages Docker containers on your behalf, downloads multi-gigabyte model files from third-party hosts (primarily Hugging Face community mirrors), exposes HTTP APIs on local ports, and — when you use the RAG features — reads files inside any directory you index and stores embeddings of them on disk. It is provided <strong>as is, without warranty of any kind</strong>, express or implied, including but not limited to merchantability, fitness for a particular purpose, and noninfringement.</p>
+<p>This software runs large language models on your machine, manages Docker containers on your behalf, downloads multi-gigabyte model files from third-party hosts (primarily Hugging Face community mirrors), exposes HTTP APIs on local ports, and (when you use the RAG features) reads files inside any directory you index and stores embeddings of them on disk. It is provided <strong>as is, without warranty of any kind</strong>, express or implied, including but not limited to merchantability, fitness for a particular purpose, and noninfringement.</p>
 
 <p>By installing or running this software you accept that:</p>
 
