@@ -327,6 +327,72 @@ def main():
                     help="drop registry entries whose folder no longer exists")
     pp.set_defaults(func=cmd_rag_stores)
 
+    pp = rag_sub.add_parser(
+        "setup", help="first-run: pick + download recommended embedders",
+        parents=[json_parent],
+        description=(
+            "Detects your hardware tier, suggests the recommended code and "
+            "prose embedders for it, and downloads them after a yes/no "
+            "prompt. Use --non-interactive to install the recommended pair "
+            "without prompting (suitable for scripting or CI)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pp.add_argument("--non-interactive", action="store_true",
+                    help="install the recommended pair without prompting")
+    pp.add_argument("--code-embedder", help="override the recommended code embedder id")
+    pp.add_argument("--prose-embedder", help="override the recommended prose embedder id")
+    pp.set_defaults(func=cmd_rag_setup)
+
+    pp = rag_sub.add_parser(
+        "addlocal", help="register a hand-picked embedder GGUF",
+        parents=[json_parent],
+        description=(
+            "Register a GGUF you already have on disk as an embedder hydra "
+            "knows about. Pooling and dimensions are required because using "
+            "the wrong values silently destroys retrieval quality."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pp.add_argument("file", help="path to the .gguf embedder file")
+    pp.add_argument("--id", dest="alias_id",
+                    help="catalog id (default: derived from filename)")
+    pp.add_argument("--name", help="human-readable name")
+    pp.add_argument("--kind", required=True, choices=("code", "prose", "both"),
+                    help="what this embedder is best at")
+    pp.add_argument("--dimensions", type=int, required=True,
+                    help="vector length the embedder emits")
+    pp.add_argument("--pooling", required=True, choices=("mean", "cls", "last", "none"),
+                    help="llama-server --pooling mode (mean | cls | last | none)")
+    pp.add_argument("--query-prefix", default="",
+                    help="string prepended to user queries (some families require this)")
+    pp.add_argument("--document-prefix", default="",
+                    help="string prepended to indexed chunks")
+    pp.add_argument("--max-tokens", type=int, default=8192)
+    pp.add_argument("--family")
+    pp.add_argument("--license")
+    pp.add_argument("--tier", action="append", dest="tiers", default=[],
+                    choices=("tiny", "laptop", "halo", "workstation", "server"))
+    pp.add_argument("--port", type=int)
+    pp.add_argument("--gpu-layers", type=int, default=99)
+    pp.add_argument("--link", action="store_true",
+                    help="symlink the file into embedders_dir if it lives elsewhere")
+    pp.add_argument("--replace", action="store_true",
+                    help="overwrite an existing user-catalog entry with the same id")
+    pp.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    pp.set_defaults(func=cmd_rag_addlocal)
+
+    pp = rag_sub.add_parser(
+        "stop", help="stop a specific embedder sidecar",
+    )
+    pp.add_argument("alias")
+    pp.set_defaults(func=cmd_rag_stop)
+
+    pp = rag_sub.add_parser(
+        "stop-all", help="stop every embedder sidecar hydra is managing",
+    )
+    pp.set_defaults(func=cmd_rag_stop_all)
+
     p_rag.set_defaults(func=lambda a: (p_rag.print_help() or sys.exit(1)) if not a.rag_cmd else None)
 
     # --- top-level index / query commands -----------------------------------
@@ -368,6 +434,8 @@ def main():
     p.add_argument("--tag", action="append", default=[],
                    help="tag this store with <tag> (repeatable). Used by `query --tag` "
                         "and `chat --rag-tag` to scope searches.")
+    p.add_argument("--stop-embedder", action="store_true",
+                   help="tear down the embedder sidecar after indexing finishes")
     p.set_defaults(func=cmd_index)
 
     p = sub.add_parser(
@@ -398,6 +466,8 @@ def main():
     p.add_argument("--top-k", type=int, default=5, help="how many results to return")
     p.add_argument("--code-only", action="store_true", help="search only the code index")
     p.add_argument("--prose-only", action="store_true", help="search only the prose index")
+    p.add_argument("--stop-embedder", action="store_true",
+                   help="tear down the embedder sidecar(s) after query returns")
     p.set_defaults(func=cmd_query)
 
     sub.add_parser("config-path", help="print the config directory").set_defaults(func=cmd_config_path)
@@ -1791,6 +1861,272 @@ def cmd_rag_stores(args):
     return 0
 
 
+def _recommend_embedders(cfg):
+    """Pick the recommended code and prose embedders for the current tier.
+
+    Returns (code_entry_or_none, prose_entry_or_none). Looks at the catalog's
+    `recommended_for` and `kind` fields; prefers smallest-fit per kind for
+    the active tier. If `default-code`/`default-prose` tags exist on entries,
+    those win automatically.
+    """
+    catalog, _ = rag_cat_mod.load_embedder_catalog()
+    snap = hardware.system_snapshot()
+    tier = hardware.detect_tier(snap)["id"]
+
+    def _pick(kind: str):
+        candidates = [e for e in catalog
+                      if e.get("kind") in (kind, "both")
+                      and tier in (e.get("recommended_for") or [])]
+        # Prefer entries explicitly tagged as the default for this kind.
+        default_tag = f"default-{kind}"
+        for e in candidates:
+            if default_tag in (e.get("tags") or []):
+                return e
+        # Otherwise, smallest fit by size_gb.
+        candidates.sort(key=lambda e: e.get("size_gb") or 99.0)
+        return candidates[0] if candidates else None
+
+    return _pick("code"), _pick("prose")
+
+
+def cmd_rag_setup(args):
+    cfg = cfg_mod.load_user_config()
+    snap = hardware.system_snapshot()
+    tier = hardware.detect_tier(snap)
+    catalog, _ = rag_cat_mod.load_embedder_catalog()
+
+    # Resolve picks.
+    code_e = None
+    prose_e = None
+    if args.code_embedder:
+        code_e = rag_cat_mod.find_embedder(args.code_embedder)
+        if not code_e:
+            print(f"error: unknown code embedder: {args.code_embedder}", file=sys.stderr)
+            return 1
+    if args.prose_embedder:
+        prose_e = rag_cat_mod.find_embedder(args.prose_embedder)
+        if not prose_e:
+            print(f"error: unknown prose embedder: {args.prose_embedder}", file=sys.stderr)
+            return 1
+    if code_e is None or prose_e is None:
+        rec_code, rec_prose = _recommend_embedders(cfg)
+        if code_e is None:
+            code_e = rec_code
+        if prose_e is None:
+            prose_e = rec_prose
+
+    if code_e is None and prose_e is None:
+        msg = (f"no embedders are tagged for tier '{tier['id']}'. "
+               f"Run `hydra-llm rag list-online --all` to see everything.")
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+
+    to_install = []
+    seen_ids = set()
+    for e in (code_e, prose_e):
+        if e and e["id"] not in seen_ids:
+            seen_ids.add(e["id"])
+            if not rag_cat_mod.is_downloaded(e, cfg):
+                to_install.append(e)
+
+    if args.json:
+        print(json.dumps({
+            "ok": True,
+            "tier": tier["id"],
+            "code_embedder": code_e["id"] if code_e else None,
+            "prose_embedder": prose_e["id"] if prose_e else None,
+            "to_install": [e["id"] for e in to_install],
+        }, indent=2))
+        # In --json mode we still install (it's the documented effect of
+        # `rag setup`); skip prompting.
+        if to_install:
+            for e in to_install:
+                args_force = type("a", (), {"alias": e["id"], "force": False, "json": True})
+                rc = cmd_rag_download(args_force)
+                if rc != 0:
+                    return rc
+        return 0
+
+    print(f"hydra-llm RAG setup\n")
+    print(f"Detected hardware tier: {tier['id']}  ({tier['name']})\n")
+    print(f"Recommended embedders for your tier:")
+    if code_e:
+        installed = "(already installed)" if rag_cat_mod.is_downloaded(code_e, cfg) else ""
+        print(f"  code:  {code_e['id']:<22} {code_e.get('size_gb', '?')} GB  {installed}")
+    if prose_e and (not code_e or prose_e['id'] != code_e['id']):
+        installed = "(already installed)" if rag_cat_mod.is_downloaded(prose_e, cfg) else ""
+        print(f"  prose: {prose_e['id']:<22} {prose_e.get('size_gb', '?')} GB  {installed}")
+
+    if not to_install:
+        print(f"\nAll recommended embedders are already installed. RAG is ready.")
+        print(f"Try: hydra-llm index .")
+        return 0
+
+    total_gb = sum(e.get("size_gb") or 0.0 for e in to_install)
+    if not args.non_interactive:
+        ans = input(f"\nDownload {len(to_install)} embedder(s), {total_gb:.2f} GB total? [Y/n] ").strip().lower()
+        if ans and ans not in ("y", "yes"):
+            print("aborted.")
+            return 0
+
+    for e in to_install:
+        rc = cmd_rag_download(type("a", (), {"alias": e["id"], "force": False, "json": False}))
+        if rc != 0:
+            return rc
+    print(f"\nRAG ready. Try:")
+    print(f"  hydra-llm index .")
+    print(f"  hydra-llm chat <model> --rag .")
+    return 0
+
+
+def cmd_rag_addlocal(args):
+    cfg = cfg_mod.load_user_config()
+    src = Path(args.file).expanduser().resolve()
+    if not src.is_file():
+        msg = f"file not found: {src}"
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+    if src.suffix.lower() != ".gguf":
+        print(f"warning: {src.name} does not end in .gguf; proceeding anyway",
+              file=sys.stderr)
+
+    embedders_dir = Path(cfg.get("embedders_dir") or paths.EMBEDDERS_DIR_DEFAULT).expanduser().resolve()
+    embedders_dir.mkdir(parents=True, exist_ok=True)
+
+    # The embedder container bind-mounts embedders_dir at /models, so the
+    # file must live under that root. Either it's already there or we symlink.
+    try:
+        src.relative_to(embedders_dir)
+        in_dir = True
+    except ValueError:
+        in_dir = False
+    if not in_dir:
+        if not args.link:
+            msg = (f"file is at {src}\n"
+                   f"    but embedders_dir is {embedders_dir}\n"
+                   f"    options:\n"
+                   f"      - move/copy the file into {embedders_dir}\n"
+                   f"      - re-run with --link to create a symlink there")
+            if args.json:
+                print(json.dumps({"ok": False, "error": "file outside embedders_dir"}))
+            else:
+                print(f"error: {msg}", file=sys.stderr)
+            return 1
+        link_path = embedders_dir / src.name
+        if link_path.exists() or link_path.is_symlink():
+            if link_path.resolve() != src:
+                print(f"error: {link_path} already exists and points elsewhere",
+                      file=sys.stderr)
+                return 1
+        else:
+            link_path.symlink_to(src)
+        on_disk_filename = src.name
+    else:
+        on_disk_filename = src.name
+
+    alias = args.alias_id or _slug_from_filename(src.stem)
+    name = args.name or src.stem.replace("_", " ").replace("-", " ")
+    size_gb = round(src.stat().st_size / (1024 ** 3), 2)
+
+    entry: dict = {
+        "id": alias,
+        "name": name,
+        "family": args.family or "local",
+        "kind": args.kind,
+        "dimensions": int(args.dimensions),
+        "max_tokens": int(args.max_tokens),
+        "pooling": args.pooling,
+        "query_prefix": args.query_prefix or "",
+        "document_prefix": args.document_prefix or "",
+        "filename": on_disk_filename,
+        "size_gb": size_gb,
+        "gpu_layers": args.gpu_layers,
+        "recommended_for": list(args.tiers or []),
+        "tags": ["local"],
+    }
+    if args.license:
+        entry["license"] = args.license
+    if args.port:
+        entry["default_port"] = args.port
+    else:
+        # Pick from the embedder port range, avoiding collisions.
+        running, _ = docker_driver.list_running_embedders(cfg)
+        catalog, _ = rag_cat_mod.load_embedder_catalog()
+        taken = {r["port"] for r in running if r["port"]}
+        for e in catalog:
+            if e.get("default_port"):
+                taken.add(e["default_port"])
+        lo, hi = cfg.get("embedder_port_range", [19080, 19099])
+        for p in range(lo, hi + 1):
+            if p not in taken:
+                entry["default_port"] = p
+                break
+        if "default_port" not in entry:
+            print("error: no free port in embedder_port_range; pass --port",
+                  file=sys.stderr)
+            return 1
+
+    if not args.json and not args.yes:
+        print(f"Will register this entry in {paths.USER_EMBEDDERS}:\n")
+        for k in ("id", "name", "kind", "dimensions", "pooling",
+                  "query_prefix", "filename", "default_port", "size_gb"):
+            v = entry.get(k)
+            if v not in (None, ""):
+                print(f"  {k:<14} {v!r}" if isinstance(v, str) else f"  {k:<14} {v}")
+        ans = input("\nWrite entry? [Y/n] ").strip().lower()
+        if ans and ans not in ("y", "yes"):
+            print("aborted.")
+            return 0
+
+    try:
+        path, replaced = rag_cat_mod.add_user_embedder_entry(entry, replace=args.replace)
+    except rag_cat_mod.EmbedderCatalogError as e:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    verb = "replaced" if replaced else "added"
+    if args.json:
+        print(json.dumps({"ok": True, "id": entry["id"], "path": str(path),
+                          "replaced": replaced}, indent=2))
+    else:
+        print(f"\n{verb} {entry['id']} in {path}")
+        print(f"try:  hydra-llm rag info {entry['id']}")
+    return 0
+
+
+def cmd_rag_stop(args):
+    cfg = cfg_mod.load_user_config()
+    ok, info = docker_driver.stop_embedder(args.alias, cfg)
+    if not ok:
+        print(f"error: {info}", file=sys.stderr)
+        return 1
+    print(f"stopped {info}")
+    return 0
+
+
+def cmd_rag_stop_all(args):
+    cfg = cfg_mod.load_user_config()
+    ok, err, names = docker_driver.stop_all_embedders(cfg)
+    if not ok:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    if not names:
+        print("no embedder containers running.")
+    else:
+        for n in names:
+            print(f"stopped {n}")
+    return 0
+
+
 def cmd_index(args):
     cfg = cfg_mod.load_user_config()
     try:
@@ -1851,16 +2187,47 @@ def cmd_index(args):
     )
 
     if not plan.code_embedder and not plan.prose_embedder:
-        msg = (
-            "no embedders are installed. Run `hydra-llm rag list-online` to "
-            "see what's available, then `hydra-llm rag download <id>` for at "
-            "least one of each kind you want to index."
-        )
-        if args.json:
-            print(json.dumps({"ok": False, "error": msg}))
-        else:
-            print(f"error: {msg}", file=sys.stderr)
-        return 1
+        # No embedders installed yet. If we're on a TTY and in non-JSON
+        # mode, offer to run `rag setup` inline rather than punt the user
+        # back to the docs.
+        if (not args.json) and sys.stdin.isatty() and sys.stdout.isatty():
+            print(
+                "No embedders installed yet. RAG needs at least one to index a folder.",
+                file=sys.stderr,
+            )
+            ans = input(
+                "Run `hydra-llm rag setup` now to install the recommended pair? [Y/n] "
+            ).strip().lower()
+            if ans and ans not in ("y", "yes"):
+                print("aborted.")
+                return 1
+            setup_args = type("a", (), {
+                "non_interactive": False, "code_embedder": None,
+                "prose_embedder": None, "json": False,
+            })
+            rc = cmd_rag_setup(setup_args)
+            if rc != 0:
+                return rc
+            # Re-plan now that embedders exist.
+            plan = rag_pipeline.plan_index(
+                Path(args.path), cfg=cfg, full_rebuild=args.full,
+                extra_excludes=args.exclude, extra_includes=args.include,
+                max_depth=args.depth,
+                max_file_size_bytes=int(args.max_file_size_mb * 1024 * 1024),
+                code_embedder=code_e, prose_embedder=prose_e,
+                single_index=args.single_index, only_kind=only_kind,
+            )
+        if not plan.code_embedder and not plan.prose_embedder:
+            msg = (
+                "no embedders are installed. Run `hydra-llm rag setup` "
+                "(interactive) or `hydra-llm rag download <id>` for at "
+                "least one of each kind you want to index."
+            )
+            if args.json:
+                print(json.dumps({"ok": False, "error": msg}))
+            else:
+                print(f"error: {msg}", file=sys.stderr)
+            return 1
 
     if args.dry_run:
         if args.json:
@@ -1932,6 +2299,10 @@ def cmd_index(args):
         print()
         print(f"Try: hydra-llm query \"<text>\" --in {plan.root}")
         print(f"     hydra-llm chat <model> --rag {plan.root}")
+    if args.stop_embedder:
+        for emb in (plan.code_embedder, plan.prose_embedder):
+            if emb:
+                docker_driver.stop_embedder(emb["id"], cfg)
     return 0
 
 
@@ -2016,6 +2387,14 @@ def cmd_query(args):
             print(f"     {line[:100]}")
         if len(snippet) > 8:
             print(f"     ... ({len(snippet) - 8} more lines)")
+    if args.stop_embedder:
+        # Stop every embedder we currently know about; the federated query
+        # may have brought up multiple. This is the manual escape valve;
+        # the long-term answer is the idle-TTL daemon (slice 4 follow-up).
+        running, _ = docker_driver.list_running_embedders(cfg)
+        for r in running:
+            if r.get("alias"):
+                docker_driver.stop_embedder(r["alias"], cfg)
     return 0
 
 
