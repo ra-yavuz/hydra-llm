@@ -1689,6 +1689,15 @@ def cmd_chat(args):
             print("error: pass either a session-file positional or --session, not both",
                   file=sys.stderr)
             return 1
+    elif args.session == "default":
+        # Default session is per-(cwd, alias) so a chat in folder A does not
+        # bleed into folder B. Centralised location keeps the user's project
+        # dirs clean; the cwd is hashed into the filename.
+        import hashlib
+        cwd = str(Path.cwd().resolve())
+        cwd_key = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:12]
+        session_file = paths.SESSIONS_DIR / f"{cwd_key}-{alias}.json"
+        paths.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
     rag_config = _build_rag_config(args, entry)
 
