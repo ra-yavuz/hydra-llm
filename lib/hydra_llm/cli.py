@@ -235,8 +235,18 @@ def main():
     p.add_argument("alias")
     p.set_defaults(func=cmd_api)
 
-    p = sub.add_parser("chat", help="interactive chat with a model")
-    p.add_argument("alias")
+    p = sub.add_parser("chat", help="interactive chat with a model",
+                       description=(
+                           "Drop into a chat REPL with a model. With no "
+                           "<alias> argument: if exactly one model is "
+                           "running, attaches to it; if several are running, "
+                           "lists them and prompts; if none, lists installed "
+                           "models and prompts you to pick one to start."
+                       ),
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("alias", nargs="?",
+                   help="catalog id (or numeric # from `hydra-llm list`). "
+                        "Optional: see description.")
     p.add_argument("session_file", nargs="?",
                    help="path to a session JSON file (resumes if it exists, "
                         "creates it otherwise). Overrides --session when given. "
@@ -844,6 +854,61 @@ def _resolve_alias_or_index(arg, cfg=None):
         return None, (f"index {idx} out of range; "
                       f"have {len(ordered)} entries (run `hydra-llm status` to see them)")
     return None, f"unknown alias: {arg}"
+
+
+def _autoselect_chat_alias(cfg) -> str | None:
+    """No alias given to `hydra-llm chat`. Resolve one.
+
+    - Exactly one chat-model container running: attach to it (no prompt).
+    - Several running: list them and prompt the user for a number.
+    - None running: list installed models and prompt the user to pick one
+      (the chat command will start it after we return).
+
+    Returns the chosen alias, or None on user abort / error.
+    """
+    rows, _ = docker_driver.list_running(cfg)
+    running = [r for r in rows if r.get("state") == "running"]
+    if len(running) == 1:
+        alias = running[0]["alias"]
+        print(f"Attaching to the only running model: {alias}")
+        return alias
+    if len(running) > 1:
+        print("Several models are running. Pick one:")
+        for i, r in enumerate(running, 1):
+            print(f"  {i}. {r['alias']}  (port {r.get('port', '?')})")
+        try:
+            ans = input(f"\nNumber [1-{len(running)}]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if not ans.isdigit() or not (1 <= int(ans) <= len(running)):
+            print("aborted.")
+            return None
+        return running[int(ans) - 1]["alias"]
+
+    # No models running. Offer to start one.
+    catalog, _ = cfg_mod.load_catalog()
+    installed = [m for m in catalog if downloader.is_downloaded(m, cfg)]
+    if not installed:
+        print("No models running and none downloaded.", file=sys.stderr)
+        print("       run `hydra-llm list-online` to browse the catalog,",
+              file=sys.stderr)
+        print("       then `hydra-llm download <id>` to fetch one.",
+              file=sys.stderr)
+        return None
+    print("No models are running. Pick one to start:")
+    for i, m in enumerate(installed, 1):
+        size = f"{m.get('size_gb', '?')} GB"
+        print(f"  {i}. {m['id']:<32} {size:<10} {m.get('name', '')}")
+    try:
+        ans = input(f"\nNumber [1-{len(installed)}]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if not ans.isdigit() or not (1 <= int(ans) <= len(installed)):
+        print("aborted.")
+        return None
+    return installed[int(ans) - 1]["id"]
 
 
 def _slug_from_filename(stem: str) -> str:
@@ -1644,6 +1709,16 @@ def cmd_api(args):
 
 def cmd_chat(args):
     cfg = cfg_mod.load_user_config()
+
+    # No alias: auto-select. If exactly one model is running, attach to it.
+    # If several are running, list and prompt. If none, list installed
+    # models and prompt the user to pick one to start.
+    if not args.alias:
+        chosen = _autoselect_chat_alias(cfg)
+        if chosen is None:
+            return 1  # _autoselect already printed an error or the user aborted
+        args.alias = chosen
+
     alias, err = _resolve_alias_or_index(args.alias, cfg)
     if err:
         print(f"error: {err}", file=sys.stderr)
