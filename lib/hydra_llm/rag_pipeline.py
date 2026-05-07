@@ -15,12 +15,78 @@ from typing import Iterable
 from . import (
     config as cfg_mod,
     docker_driver,
+    downloader,
     embedding,
     hardware,
+    paths,
     rag_catalog,
     rag_index,
     rag_store,
 )
+
+
+# Heuristics for "the embedder container died because its GGUF is corrupt".
+# These appear in llama-server's stderr/stdout when gguf_init_from_file
+# trips on bad metadata; the canonical signature today is the
+# `GGML_ASSERT(!key.empty())` abort from gguf_read_emplace_helper, but we
+# also catch the broader "gguf_init_from_file" path so adjacent breakage
+# from re-uploaded or partially-downloaded GGUFs is recovered.
+_CORRUPT_GGUF_HINTS = (
+    "GGML_ASSERT(!key.empty())",
+    "gguf_init_from_file",
+    "gguf_read_emplace_helper",
+    "invalid magic characters",  # llama.cpp's plain-bad-file error
+)
+
+
+def _ensure_embedder_with_repair(embedder_entry: dict, cfg: dict,
+                                 *, wait_timeout: float = 60.0,
+                                 progress=None) -> tuple[bool, dict]:
+    """Wrap docker_driver.ensure_embedder_running with one auto-repair pass.
+
+    If the embedder fails to come up and the container logs look like a
+    corrupt-GGUF crash, re-download the embedder GGUF once and retry. If
+    the second attempt also fails, return whatever ensure_embedder_running
+    returned. Anything *not* matching the corrupt-GGUF hints is treated as
+    a real failure and bubbled up immediately.
+    """
+    ok, info = docker_driver.ensure_embedder_running(embedder_entry, cfg,
+                                                    wait_timeout=wait_timeout)
+    if ok:
+        return True, info
+    logs = info.get("logs") or ""
+    if not any(hint in logs for hint in _CORRUPT_GGUF_HINTS):
+        return False, info
+
+    # Looks like a corrupt GGUF. Drop the file and re-download from the
+    # catalog URL, then retry once.
+    if progress is not None:
+        progress("repairing-embedder", {"embedder": embedder_entry["id"]})
+    embedders_dir = (
+        Path(cfg.get("embedders_dir") or paths.EMBEDDERS_DIR_DEFAULT).expanduser()
+    )
+    target = embedders_dir / embedder_entry["filename"]
+    try:
+        if target.exists():
+            target.unlink()
+    except OSError:
+        pass
+    # Tear down the failed container so the retry path has a clean slate.
+    try:
+        docker_driver.stop_embedder(embedder_entry["id"], cfg)
+    except Exception:
+        pass
+    try:
+        downloader.download(embedder_entry, cfg, force=True, dest_dir=embedders_dir)
+    except RuntimeError:
+        # Download itself failed; fall back to the original error.
+        return False, info
+
+    ok, info2 = docker_driver.ensure_embedder_running(embedder_entry, cfg,
+                                                     wait_timeout=wait_timeout)
+    if ok:
+        info2["repaired"] = True
+    return ok, info2
 
 
 @dataclass
@@ -234,10 +300,12 @@ def execute_plan(plan: IndexPlan,
                 f"`hydra-llm rag download {e['id']}` first."
             )
         progress("starting-embedder", {"embedder": e["id"]})
-        ok, info = docker_driver.ensure_embedder_running(e, cfg)
+        ok, info = _ensure_embedder_with_repair(e, cfg, progress=progress)
         if not ok:
             raise RuntimeError(f"failed to start embedder {e['id']}: "
                                f"{info.get('error')}\n{info.get('logs', '')}")
+        if info.get("repaired"):
+            progress("repaired-embedder", {"embedder": e["id"]})
 
     # Drop chunks for deleted/changed files.
     files_registry = rag_store.read_files_registry(plan.root) if not plan.full_rebuild else {}
@@ -427,7 +495,7 @@ def retrieve(root: Path,
                 f"embedder {e['id']} is not downloaded. Run "
                 f"`hydra-llm rag download {e['id']}` first."
             )
-        ok, info = docker_driver.ensure_embedder_running(e, cfg)
+        ok, info = _ensure_embedder_with_repair(e, cfg)
         if not ok:
             raise RuntimeError(f"failed to start embedder {e['id']}: "
                                f"{info.get('error')}")
@@ -555,7 +623,7 @@ def retrieve_federated(query: str,
     # Bring up each distinct embedder once.
     for eid in needed_embedder_ids:
         e = cat_by_id[eid]
-        ok, info = docker_driver.ensure_embedder_running(e, cfg)
+        ok, info = _ensure_embedder_with_repair(e, cfg)
         if not ok:
             raise RuntimeError(f"failed to start embedder {eid}: "
                                f"{info.get('error')}")

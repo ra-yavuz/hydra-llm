@@ -42,6 +42,24 @@ Every model server (chat or embedder) runs in its own Docker container. The reas
 - **Inspectable.** `docker ps` tells you exactly which models are running and on which port. `docker logs hydra-<alias>` gives you the raw llama-server output. No background daemon hiding state behind an opaque API.
 - **Per-model isolation.** Two models running side by side cannot interfere with each other's address space or file handles; they are separate processes in separate containers. Killing one never destabilises another.
 
+## Engine updates and pinning
+
+Each model server runs in a Docker container hydra builds locally from a `Dockerfile` shipped with the deb. The Dockerfile pins a specific llama.cpp commit, so the engine you get is reproducible: every user on the same hydra-llm version runs the same llama.cpp.
+
+When a hydra-llm release bumps the pinned commit (and we do that whenever there's a meaningful llama.cpp fix or a model family that needs newer parser support), the deb's postinstall script notices the mismatch between the Dockerfile's ref and the label baked into your existing engine image, and rebuilds the image automatically. This works on upgrades **and** downgrades. `apt upgrade hydra-llm` keeps your engine current with no extra step. The rebuild log lands at `/var/log/hydra-llm-engine-rebuild.log` if you ever want to see what happened.
+
+If a rebuild fails (transient network, Docker daemon down, an upstream llama.cpp build break), the postinstall logs a warning and continues; your previous engine still works. You can retry any time with:
+
+```sh
+hydra-llm setup --rebuild
+```
+
+That's also the way to force a rebuild manually for any other reason (corrupted layers, debugging a build).
+
+## Embedder auto-recover
+
+When an embedder sidecar fails to start because the GGUF on disk looks corrupt (a partial download, a re-uploaded file with a different SHA, etc.), hydra detects the parse failure in the container logs, deletes the local file, re-downloads from the catalog URL, and retries once. Transparent to the user; no `--force` flag needed. If the second attempt also fails, the original error bubbles up.
+
 ## Where it runs
 
 hydra-llm targets Linux first (Debian, Ubuntu, Fedora, Arch, etc.) but the architecture is portable wherever Docker runs:

@@ -23,6 +23,10 @@ RUN git clone https://github.com/ggml-org/llama.cpp.git . \
 
 ENV PATH=/opt/llama:/usr/local/bin:$PATH \
     LD_LIBRARY_PATH=/opt/llama
+
+# See Dockerfile.vulkan: postinst reads this label to detect pin bumps.
+LABEL llama_cpp_ref="${LLAMA_CPP_REF}"
+
 EXPOSE 8081
 ENTRYPOINT ["llama-server"]
 CMD ["--help"]

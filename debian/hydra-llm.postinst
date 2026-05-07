@@ -2,8 +2,41 @@
 # postinst for hydra-llm
 set -e
 
+# Rebuild engine images automatically when the deb's pinned llama.cpp ref
+# differs from the ref baked into the user's currently-installed image.
+# This handles upgrades AND downgrades transparently. Never fatal: if the
+# rebuild fails, log a warning and continue; the user can run
+# `hydra-llm setup --rebuild` manually.
+maybe_rebuild_engine() {
+    [ -x "$(command -v docker)" ] || return 0
+    docker info >/dev/null 2>&1 || return 0
+    DOCKER_DIR="/usr/share/hydra-llm/docker"
+    [ -d "$DOCKER_DIR" ] || return 0
+    for variant in vulkan cpu; do
+        DF="$DOCKER_DIR/Dockerfile.$variant"
+        [ -f "$DF" ] || continue
+        TAG="hydra-llm/llama-server:$variant"
+        # Skip if the user does not yet have an image of this variant. First-
+        # run setup is still the user's responsibility for fresh installs.
+        docker image inspect "$TAG" >/dev/null 2>&1 || continue
+        EXPECTED=$(awk -F= '/^ARG LLAMA_CPP_REF=/ {print $2; exit}' "$DF")
+        CURRENT=$(docker inspect "$TAG" --format '{{ index .Config.Labels "llama_cpp_ref" }}' 2>/dev/null || echo "")
+        if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$CURRENT" ]; then
+            echo "hydra-llm: engine pin changed ($CURRENT -> $EXPECTED); rebuilding $TAG..."
+            if docker build -f "$DF" -t "$TAG" "$DOCKER_DIR" >/var/log/hydra-llm-engine-rebuild.log 2>&1; then
+                echo "hydra-llm: rebuilt $TAG against llama.cpp ref $EXPECTED"
+            else
+                echo "hydra-llm: rebuild of $TAG failed; previous image still works." >&2
+                echo "  see /var/log/hydra-llm-engine-rebuild.log; rerun manually with:" >&2
+                echo "    hydra-llm setup --rebuild" >&2
+            fi
+        fi
+    done
+}
+
 case "$1" in
     configure)
+        maybe_rebuild_engine
         cat <<'EOF'
 
 hydra-llm installed.
@@ -27,6 +60,11 @@ If you want the KDE Plasma 6 panel widget too:
 
 Note: hydra-llm needs Docker. If your user is not in the 'docker' group,
 add yourself with `sudo usermod -aG docker $USER` and log out / back in.
+
+Engine updates: when a hydra-llm release bumps the pinned llama.cpp ref,
+this postinst automatically rebuilds your existing engine image so
+`apt upgrade` keeps the engine current with no extra step. If you want
+to force a rebuild any time, run `hydra-llm setup --rebuild`.
 
 DISCLAIMER: This software runs LLMs locally, manages Docker containers on
 your behalf, and downloads multi-gigabyte model files from third-party hosts.

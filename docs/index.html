@@ -120,6 +120,22 @@
   <li><strong>Per-model isolation.</strong> Two models running side by side cannot interfere with each other's address space or file handles; they are separate processes in separate containers. Killing one never destabilises another.</li>
 </ul>
 
+<h2>Engine updates and pinning</h2>
+
+<p>Each model server runs in a Docker container hydra builds locally from a Dockerfile shipped with the deb. The Dockerfile pins a specific llama.cpp commit, so the engine you get is reproducible: every user on the same hydra-llm version runs the same llama.cpp.</p>
+
+<p>When a hydra-llm release bumps the pinned commit (which we do whenever there is a meaningful llama.cpp fix or a model family that needs newer parser support), the deb's postinstall script notices the mismatch between the Dockerfile's ref and the label baked into your existing engine image, and rebuilds the image automatically. This works on upgrades <em>and</em> downgrades. <code>apt upgrade hydra-llm</code> keeps your engine current with no extra step. The rebuild log lands at <code>/var/log/hydra-llm-engine-rebuild.log</code> if you ever want to see what happened.</p>
+
+<p>If a rebuild fails (transient network, Docker daemon down, an upstream llama.cpp build break), the postinstall logs a warning and continues; your previous engine still works. You can retry any time with:</p>
+
+<pre><code>hydra-llm setup --rebuild</code></pre>
+
+<p>That is also the way to force a rebuild manually for any other reason (corrupted layers, debugging a build).</p>
+
+<h2>Embedder auto-recover</h2>
+
+<p>When an embedder sidecar fails to start because the GGUF on disk looks corrupt (a partial download, a re-uploaded file with a different SHA, etc.), hydra detects the parse failure in the container logs, deletes the local file, re-downloads from the catalog URL, and retries once. Transparent to the user; no <code>--force</code> flag needed. If the second attempt also fails, the original error bubbles up.</p>
+
 <h2>Where it runs</h2>
 
 <p>hydra-llm targets Linux first (Debian, Ubuntu, Fedora, Arch, etc.) but the architecture is portable wherever Docker runs:</p>

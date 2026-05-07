@@ -1,3 +1,30 @@
+hydra-llm (0.2.5-1) unstable; urgency=low
+
+  * Engine rebuilds are now automatic across `apt upgrade` and `apt
+    install --reinstall` (and downgrades). When a hydra-llm release
+    bumps the pinned llama.cpp ref, the postinst notices the mismatch
+    between the Dockerfile's ref and the LABEL baked into the user's
+    existing engine image, and rebuilds the image right then. No
+    extra `hydra-llm setup --rebuild` step required for a normal
+    upgrade.
+  * Both Dockerfiles now carry `LABEL llama_cpp_ref="${LLAMA_CPP_REF}"`
+    so the postinst can read what the running image was built from.
+  * Postinst rebuild is non-fatal: if `docker build` fails (network
+    blip, daemon down, etc.) the previous image continues to work and
+    we point the user at /var/log/hydra-llm-engine-rebuild.log plus
+    `hydra-llm setup --rebuild` for a manual retry.
+  * Embedder sidecars now auto-recover from corrupt GGUFs. When
+    llama-server aborts at gguf_init_from_file (the canonical
+    GGML_ASSERT(!key.empty()) signature, or other GGUF parser crash),
+    hydra detects the failure in the container logs, deletes the
+    local GGUF, re-downloads from the catalog URL, and retries once.
+    Removes the need for users to remember `hydra-llm rag download
+    <id> --force` after a partial download.
+  * README and project page gained "Engine updates and pinning" plus
+    "Embedder auto-recover" sections explaining both behaviors.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Thu, 07 May 2026 14:35:00 +0000
+
 hydra-llm (0.2.4-1) unstable; urgency=low
 
   * Engine images are now built against a pinned llama.cpp commit

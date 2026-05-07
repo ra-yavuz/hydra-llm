@@ -28,6 +28,12 @@ RUN git clone https://github.com/ggml-org/llama.cpp.git . \
 ENV PATH=/opt/llama:/usr/local/bin:$PATH \
     LD_LIBRARY_PATH=/opt/llama \
     GGML_VULKAN=1
+
+# Carry the llama.cpp ref the image was built from so the deb postinst can
+# compare it against the Dockerfile shipped with the *currently-installed*
+# hydra-llm and rebuild on mismatch (upgrade or downgrade).
+LABEL llama_cpp_ref="${LLAMA_CPP_REF}"
+
 EXPOSE 8081
 ENTRYPOINT ["llama-server"]
 CMD ["--help"]
