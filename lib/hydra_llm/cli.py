@@ -9,7 +9,8 @@ from pathlib import Path
 from . import (
     __version__, autostart as autostart_mod, chat as chat_mod, config as cfg_mod,
     desktop, docker_driver, downloader, hardware, paths,
-    personas as personas_mod, setup as setup_mod, tray as tray_mod,
+    personas as personas_mod, rag_catalog as rag_cat_mod,
+    setup as setup_mod, tray as tray_mod,
 )
 
 
@@ -93,6 +94,36 @@ def main():
                    help="overwrite an existing user-catalog entry with the same id")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p.set_defaults(func=cmd_addlocal)
+
+    p = sub.add_parser(
+        "create",
+        help="bake a persona into an existing model as a new catalog alias",
+        parents=[json_parent],
+        description=(
+            "Create a new catalog alias by binding an existing model to a "
+            "persona file. The persona's body becomes the new alias's inline "
+            "system_prompt, and any front-matter temperature/max_tokens become "
+            "its inline params; the underlying GGUF is shared with the base "
+            "model (no extra download).\n\n"
+            "Example:\n"
+            "  hydra-llm create gemma-2-2b ~/personas/coolguy.md\n"
+            "  -> creates alias 'gemma-2-2b-coolguy'\n\n"
+            "  hydra-llm create gemma-2-2b ~/personas/coolguy.md mymodel\n"
+            "  -> creates alias 'mymodel'\n\n"
+            "After creation, `hydra-llm chat <new-alias>` jumps straight in "
+            "with the persona applied; no --persona flag needed."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("base", help="catalog id of an existing model to base the new alias on")
+    p.add_argument("persona_file", help="path to the persona file (.md or .txt)")
+    p.add_argument("new_id", nargs="?",
+                   help="catalog id for the new alias (default: <base>-<persona-stem>)")
+    p.add_argument("--port", type=int, help="override the auto-picked port")
+    p.add_argument("--replace", action="store_true",
+                   help="overwrite an existing user-catalog entry with the same id")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    p.set_defaults(func=cmd_create)
 
     p = sub.add_parser("remove", help="delete a downloaded model file")
     p.add_argument("alias")
@@ -191,6 +222,11 @@ def main():
 
     p = sub.add_parser("chat", help="interactive chat with a model")
     p.add_argument("alias")
+    p.add_argument("session_file", nargs="?",
+                   help="path to a session JSON file (resumes if it exists, "
+                        "creates it otherwise). Overrides --session when given. "
+                        "Useful to keep a chat log next to the project it's about: "
+                        "`hydra-llm chat gemma-2-2b ./notes.json`.")
     p.add_argument("--persona", "-p", help="name of a persona file (without extension) or a path")
     p.add_argument("--session", "-s", default="default", help="session name (resumes if exists)")
     p.add_argument("--temperature", type=float)
@@ -207,6 +243,61 @@ def main():
     pp = p_sub.add_parser("path", help="print the personas directory")
     pp.set_defaults(func=cmd_persona_path)
     p.set_defaults(func=lambda a: (p.print_help() or sys.exit(1)) if not a.persona_cmd else None)
+
+    # --- rag (retrieval-augmented generation) -------------------------------
+    p_rag = sub.add_parser(
+        "rag",
+        help="manage embedders and indexed corpora for RAG",
+        description=(
+            "Embedders are a separate model species from chat models; they "
+            "produce fixed-size vectors and run via `llama-server "
+            "--embeddings`. Use `hydra-llm rag setup` for first-run, "
+            "`hydra-llm index <path>` to index a folder, and "
+            "`hydra-llm chat <alias> --rag <path>` to chat with retrieval."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    rag_sub = p_rag.add_subparsers(dest="rag_cmd")
+
+    pp = rag_sub.add_parser(
+        "list-online", help="list available embedders, filtered to your hardware",
+        parents=[json_parent],
+    )
+    pp.add_argument("--all", action="store_true",
+                    help="include embedders that don't fit your hardware")
+    pp.add_argument("--tier", help="filter to a specific tier id")
+    pp.set_defaults(func=cmd_rag_list_online)
+
+    pp = rag_sub.add_parser(
+        "list", help="list installed embedders",
+        parents=[json_parent],
+    )
+    pp.set_defaults(func=cmd_rag_list)
+
+    pp = rag_sub.add_parser(
+        "download", help="download an embedder GGUF",
+        parents=[json_parent],
+    )
+    pp.add_argument("alias", help="embedder id (e.g. nomic-embed-text)")
+    pp.add_argument("--force", action="store_true",
+                    help="re-download even if file exists")
+    pp.set_defaults(func=cmd_rag_download)
+
+    pp = rag_sub.add_parser(
+        "remove", help="delete an installed embedder GGUF",
+    )
+    pp.add_argument("alias")
+    pp.add_argument("--yes", action="store_true", help="skip confirmation")
+    pp.set_defaults(func=cmd_rag_remove)
+
+    pp = rag_sub.add_parser(
+        "info", help="show details about an embedder",
+        parents=[json_parent],
+    )
+    pp.add_argument("alias")
+    pp.set_defaults(func=cmd_rag_info)
+
+    p_rag.set_defaults(func=lambda a: (p_rag.print_help() or sys.exit(1)) if not a.rag_cmd else None)
 
     sub.add_parser("config-path", help="print the config directory").set_defaults(func=cmd_config_path)
 
@@ -673,6 +764,129 @@ def cmd_addlocal(args):
     return 0
 
 
+# Catalog fields we copy through from a base entry into a `create`-derived
+# alias. We deliberately exclude `id`, `name`, `system_prompt`, `params`, and
+# `default_port` because those are set fresh by `create`; everything else
+# (filename, size, gpu_layers, family, license, recommended_for, tags, ...)
+# describes the underlying weights and applies equally to the derived alias.
+_CREATE_INHERITED_KEYS = (
+    "filename", "size_gb", "gpu_layers", "recommended_for", "tags",
+    "needs_ram_gb", "fits_in_vram_gb", "context", "family", "license",
+    "url", "sha256", "default_reasoning_format", "extra_args",
+)
+
+
+def cmd_create(args):
+    cfg = cfg_mod.load_user_config()
+
+    base_entry = _resolve_catalog(args.base)
+    if not base_entry:
+        msg = f"unknown base model: {args.base}"
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+
+    persona_path = Path(args.persona_file).expanduser().resolve()
+    try:
+        persona = personas_mod.load_persona(str(persona_path))
+    except FileNotFoundError as e:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    new_id = args.new_id or _slug_from_filename(f"{base_entry['id']}-{persona_path.stem}")
+
+    # Port choice: explicit --port wins. Otherwise inherit the base model's
+    # default_port. Persona-baked aliases are skins over the same GGUF, so
+    # sharing the base's port reservation is the natural default; you can only
+    # run one container on a port at a time anyway, and the user can stop the
+    # base before running the alias (or pass --port for parallel use).
+    if args.port:
+        port = args.port
+    elif base_entry.get("default_port"):
+        port = base_entry["default_port"]
+    else:
+        running, _ = docker_driver.list_running(cfg)
+        taken_ports = {r["port"] for r in running if r["port"]}
+        catalog, _ = cfg_mod.load_catalog()
+        for m in catalog:
+            if m.get("default_port"):
+                taken_ports.add(m["default_port"])
+        port = _next_free_port(cfg, taken_ports)
+        if port is None:
+            print("error: no free port in port_range and base has no default_port; pass --port",
+                  file=sys.stderr)
+            return 1
+
+    entry: dict = {
+        "id": new_id,
+        "name": f"{base_entry.get('name', base_entry['id'])} ({persona.name})",
+    }
+    for key in _CREATE_INHERITED_KEYS:
+        if key in base_entry:
+            entry[key] = base_entry[key]
+    entry["default_port"] = port
+    entry["system_prompt"] = persona.system_prompt
+
+    inline_params: dict = {}
+    if persona.temperature is not None:
+        inline_params["temperature"] = float(persona.temperature)
+    if persona.max_tokens is not None:
+        inline_params["max_tokens"] = int(persona.max_tokens)
+    if inline_params:
+        entry["params"] = inline_params
+
+    # Always tag the entry as a create-derived alias so future tooling can
+    # distinguish baked aliases from raw `addlocal` entries without guessing.
+    tags = list(entry.get("tags") or [])
+    if "persona-baked" not in tags:
+        tags.append("persona-baked")
+    entry["tags"] = tags
+    entry["base_id"] = base_entry["id"]
+    entry["persona_source"] = str(persona_path)
+
+    if not args.json and not args.yes:
+        print(f"Will register this entry in {paths.USER_CATALOG}:\n")
+        print(f"  id:           {entry['id']}")
+        print(f"  name:         {entry['name']}")
+        print(f"  base:         {base_entry['id']} (filename: {entry.get('filename')})")
+        print(f"  persona:      {persona.name}  (from {persona_path})")
+        print(f"  default_port: {entry['default_port']}")
+        if inline_params:
+            print(f"  params:       {inline_params}")
+        first_line = entry["system_prompt"].splitlines()[0] if entry["system_prompt"] else ""
+        if first_line:
+            preview = first_line if len(first_line) <= 78 else first_line[:75] + "..."
+            print(f"  prompt[0]:    {preview}")
+        ans = input("\nWrite entry? [Y/n] ").strip().lower()
+        if ans and ans not in ("y", "yes"):
+            print("aborted.")
+            return 0
+
+    try:
+        path, replaced = cfg_mod.add_user_catalog_entry(entry, replace=args.replace)
+    except cfg_mod.CatalogError as e:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    verb = "replaced" if replaced else "created"
+    if args.json:
+        print(json.dumps({"ok": True, "id": entry["id"], "base": base_entry["id"],
+                          "persona": persona.name, "path": str(path),
+                          "replaced": replaced}, indent=2))
+    else:
+        print(f"\n{verb} {entry['id']} in {path}")
+        print(f"try:  hydra-llm chat {entry['id']}")
+    return 0
+
+
 def cmd_download(args):
     cfg = cfg_mod.load_user_config()
     entry = _resolve_catalog(args.alias)
@@ -1066,12 +1280,21 @@ def cmd_chat(args):
     if args.max_tokens is not None: cli_overrides["max_tokens"] = args.max_tokens
     show_thoughts = not args.no_thoughts
 
+    session_file = None
+    if args.session_file:
+        session_file = Path(args.session_file).expanduser().resolve()
+        if args.session != "default":
+            print("error: pass either a session-file positional or --session, not both",
+                  file=sys.stderr)
+            return 1
+
     chat_mod.interactive_chat(
         base_url=base_url,
         persona=persona,
         alias=alias,
         catalog_entry=entry,
         session_name=args.session,
+        session_file=session_file,
         show_thoughts=show_thoughts,
         cli_overrides=cli_overrides,
         container_name=container_name,
@@ -1112,6 +1335,166 @@ def cmd_persona_show(args):
 
 def cmd_persona_path(args):
     print(paths.PERSONAS_DIR)
+    return 0
+
+
+# --- rag / embedders ----------------------------------------------------------
+
+def cmd_rag_list_online(args):
+    cfg = cfg_mod.load_user_config()
+    catalog, sources = rag_cat_mod.load_embedder_catalog()
+    snap = hardware.system_snapshot()
+    tier = hardware.detect_tier(snap)
+    tier_filter = args.tier or tier["id"]
+
+    def keep(e):
+        if args.tier:
+            return tier_filter in (e.get("recommended_for") or [])
+        if args.all:
+            return True
+        fits, _ = hardware.fits_locally(e, snap)
+        if fits == "no":
+            return False
+        if e.get("recommended_for"):
+            return tier["id"] in e["recommended_for"]
+        return True
+
+    filtered = [e for e in catalog if keep(e)]
+    if args.json:
+        print(json.dumps({
+            "ok": True,
+            "tier": tier["id"],
+            "sources": sources,
+            "embedders": filtered,
+        }, indent=2))
+        return 0
+
+    if not filtered:
+        print("No matching embedders. Try `--all` to see everything.")
+        return 0
+
+    print(f"Embedder sources: {', '.join(sources) if sources else '(none)'}")
+    print(f"Detected tier:    {tier['id']}  ({tier['name']})\n")
+    print(f"{'ID':<22} {'KIND':<6} {'DIMS':<6} {'SIZE':<7} {'FIT':<6} {'DOWNL':<7} NAME")
+    for e in filtered:
+        fits, _ = hardware.fits_locally(e, snap)
+        size = f"{e.get('size_gb', '?')} GB"
+        downl = "yes" if rag_cat_mod.is_downloaded(e, cfg) else "no"
+        print(f"{e['id']:<22} {e.get('kind', '?'):<6} "
+              f"{str(e.get('dimensions', '?')):<6} {size:<7} {fits:<6} {downl:<7} "
+              f"{e.get('name', e['id'])}")
+    print()
+    print("Use:  hydra-llm rag download <id>   to fetch an embedder")
+    return 0
+
+
+def cmd_rag_list(args):
+    cfg = cfg_mod.load_user_config()
+    catalog, _ = rag_cat_mod.load_embedder_catalog()
+    installed = [e for e in catalog if rag_cat_mod.is_downloaded(e, cfg)]
+    if args.json:
+        print(json.dumps({
+            "ok": True,
+            "embedders": [
+                {**e, "path": str(rag_cat_mod.embedder_path(e, cfg))}
+                for e in installed
+            ],
+        }, indent=2))
+        return 0
+    if not installed:
+        print("No embedders installed.")
+        print("Run `hydra-llm rag list-online` to see what's available,")
+        print("then `hydra-llm rag download <id>` to install one.")
+        return 0
+    print(f"{'ID':<22} {'KIND':<6} {'DIMS':<6} {'SIZE':<7} NAME")
+    for e in installed:
+        size = f"{e.get('size_gb', '?')} GB"
+        print(f"{e['id']:<22} {e.get('kind', '?'):<6} "
+              f"{str(e.get('dimensions', '?')):<6} {size:<7} "
+              f"{e.get('name', e['id'])}")
+    return 0
+
+
+def cmd_rag_download(args):
+    cfg = cfg_mod.load_user_config()
+    entry = rag_cat_mod.find_embedder(args.alias)
+    if not entry:
+        msg = f"unknown embedder id: {args.alias}"
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+            print("       run `hydra-llm rag list-online` to see available ids", file=sys.stderr)
+        return 1
+    print(f"Downloading {entry['id']}  ({entry.get('size_gb', '?')} GB)")
+    print(f"  source: {entry['url']}")
+    embedders_dir = Path(cfg.get("embedders_dir") or paths.EMBEDDERS_DIR_DEFAULT).expanduser()
+    try:
+        path = downloader.download(entry, cfg, force=args.force, dest_dir=embedders_dir)
+    except RuntimeError as e:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"saved to {path}")
+    if args.json:
+        print(json.dumps({"ok": True, "path": str(path)}))
+    return 0
+
+
+def cmd_rag_remove(args):
+    cfg = cfg_mod.load_user_config()
+    entry = rag_cat_mod.find_embedder(args.alias)
+    if not entry:
+        print(f"error: unknown embedder id: {args.alias}", file=sys.stderr)
+        return 1
+    p = rag_cat_mod.embedder_path(entry, cfg)
+    if not p.exists():
+        print(f"{entry['id']} is not installed.")
+        return 0
+    if not args.yes:
+        ans = input(f"delete {p}? [y/N] ")
+        if ans.strip().lower() not in ("y", "yes"):
+            print("aborted.")
+            return 0
+    p.unlink()
+    print(f"removed {p}")
+    return 0
+
+
+def cmd_rag_info(args):
+    cfg = cfg_mod.load_user_config()
+    entry = rag_cat_mod.find_embedder(args.alias)
+    if not entry:
+        msg = f"unknown embedder id: {args.alias}"
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+    p = rag_cat_mod.embedder_path(entry, cfg)
+    if args.json:
+        out = {**entry, "path": str(p), "installed": p.is_file()}
+        print(json.dumps(out, indent=2))
+        return 0
+    print(f"id:              {entry['id']}")
+    print(f"name:            {entry.get('name', entry['id'])}")
+    print(f"family:          {entry.get('family', '?')}")
+    print(f"kind:            {entry.get('kind', '?')}")
+    print(f"dimensions:      {entry.get('dimensions', '?')}")
+    print(f"max_tokens:      {entry.get('max_tokens', '?')}")
+    print(f"pooling:         {entry.get('pooling', '?')}")
+    if entry.get("query_prefix"):
+        print(f"query prefix:    {entry['query_prefix']!r}")
+    if entry.get("document_prefix"):
+        print(f"document prefix: {entry['document_prefix']!r}")
+    print(f"size:            {entry.get('size_gb', '?')} GB")
+    print(f"license:         {entry.get('license', '?')}")
+    print(f"file:            {p}")
+    print(f"installed:       {'yes' if p.is_file() else 'no'}")
+    if entry.get("notes"):
+        print(f"\n{entry['notes']}")
     return 0
 
 

@@ -95,6 +95,32 @@ Three layers, narrowest wins:
 
 Inside the chat REPL: `/params` shows the currently active values, `/set <key> <value>` changes one for the session only, `/reset` clears history but keeps the system prompt, `/thoughts on|off` toggles reasoning output for models that emit it.
 
+### Bake a persona into a permanent alias
+
+If you keep typing `--persona <name>` for the same combination, freeze it as its own catalog entry:
+
+```sh
+hydra-llm create gemma-2-2b ~/personas/coolguy.md
+# -> registers alias 'gemma-2-2b-coolguy', sharing gemma-2-2b's GGUF (no extra download)
+
+hydra-llm chat gemma-2-2b-coolguy
+# system prompt and any front-matter temperature/max_tokens applied automatically
+
+hydra-llm create gemma-2-2b ~/personas/coolguy.md mymodel
+# -> custom alias name 'mymodel' instead of the auto-derived one
+```
+
+The persona file is read once and inlined into the new entry's `system_prompt` field, so the alias keeps working even if you later move or delete the original `.md` file. The new alias inherits the base model's port reservation; pass `--port` to override.
+
+### Pin a chat session to a path
+
+The default `hydra-llm chat <alias>` uses a centralized session at `~/.local/state/hydra-llm/sessions/default.json`, resumable via `-s/--session <name>`. Pass a positional path instead to keep the session next to whatever it's about:
+
+```sh
+hydra-llm chat gemma-2-2b ./project-notes.json
+# resumes ./project-notes.json if it exists, creates it otherwise
+```
+
 ## Plasma widget (the headline UI for KDE 6 users)
 
 ```sh

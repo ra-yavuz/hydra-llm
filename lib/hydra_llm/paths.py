@@ -20,8 +20,13 @@ DATA_DIR = _xdg("XDG_DATA_HOME", "~/.local/share") / "hydra-llm"
 SESSIONS_DIR = STATE_DIR / "sessions"
 PERSONAS_DIR = CONFIG_DIR / "personas"
 MODELS_DIR_DEFAULT = DATA_DIR / "models"
+EMBEDDERS_DIR_DEFAULT = DATA_DIR / "embedders"
 USER_CATALOG = CONFIG_DIR / "catalog.yaml"
+USER_EMBEDDERS = CONFIG_DIR / "embedders.yaml"
 USER_CONFIG = CONFIG_DIR / "config.yaml"
+# Registry of folders the user has indexed for RAG. One JSON object,
+# updated whenever `hydra-llm index <path>` runs.
+RAG_STORES_REGISTRY = STATE_DIR / "rag-stores.json"
 # Per-alias server-launch overrides. One JSON file per alias; each
 # layered on top of the global config + catalog defaults at start time.
 SERVER_OVERRIDES_DIR = CONFIG_DIR / "server"
@@ -33,6 +38,13 @@ SHIPPED_CATALOG_PATHS = [
     Path("/usr/local/share/hydra-llm/catalog.yaml"),
     # Dev fallback: catalog/ in the source tree (relative to this file).
     Path(__file__).resolve().parent.parent.parent / "catalog" / "catalog.yaml",
+]
+
+SHIPPED_EMBEDDERS_PATHS = [
+    Path(os.environ.get("HYDRA_LLM_EMBEDDERS", "")) if os.environ.get("HYDRA_LLM_EMBEDDERS") else None,
+    Path("/usr/share/hydra-llm/embedders.yaml"),
+    Path("/usr/local/share/hydra-llm/embedders.yaml"),
+    Path(__file__).resolve().parent.parent.parent / "catalog" / "embedders.yaml",
 ]
 
 SHIPPED_PRESETS_DIR_PATHS = [
@@ -60,6 +72,10 @@ def shipped_catalog_path():
     return find_first_existing(SHIPPED_CATALOG_PATHS)
 
 
+def shipped_embedders_path():
+    return find_first_existing(SHIPPED_EMBEDDERS_PATHS)
+
+
 def shipped_presets_dir():
     return find_first_existing_dir(SHIPPED_PRESETS_DIR_PATHS)
 
@@ -67,5 +83,6 @@ def shipped_presets_dir():
 def ensure_user_dirs():
     """Create the user dirs if they don't exist. Safe to call repeatedly."""
     for d in (CONFIG_DIR, STATE_DIR, CACHE_DIR, DATA_DIR, SESSIONS_DIR,
-              PERSONAS_DIR, MODELS_DIR_DEFAULT, SERVER_OVERRIDES_DIR):
+              PERSONAS_DIR, MODELS_DIR_DEFAULT, EMBEDDERS_DIR_DEFAULT,
+              SERVER_OVERRIDES_DIR):
         d.mkdir(parents=True, exist_ok=True)

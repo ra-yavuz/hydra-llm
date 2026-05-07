@@ -43,20 +43,28 @@ def session_path(name: str) -> Path:
     return paths.SESSIONS_DIR / f"{name}.json"
 
 
-def load_session(name: str, system_prompt: str):
-    p = session_path(name)
-    if p.is_file():
+def load_session_from(path: Path, system_prompt: str):
+    if path.is_file():
         try:
-            with open(p) as f:
+            with open(path) as f:
                 return json.load(f)
         except (OSError, json.JSONDecodeError):
             pass
     return [{"role": "system", "content": system_prompt}] if system_prompt else []
 
 
-def save_session(name: str, messages):
-    with open(session_path(name), "w") as f:
+def save_session_to(path: Path, messages):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
         json.dump(messages, f, indent=2)
+
+
+def load_session(name: str, system_prompt: str):
+    return load_session_from(session_path(name), system_prompt)
+
+
+def save_session(name: str, messages):
+    save_session_to(session_path(name), messages)
 
 
 def _spinner(stop_evt: threading.Event, prefix: str):
@@ -223,6 +231,7 @@ def interactive_chat(
     alias: Optional[str] = None,
     catalog_entry: Optional[dict] = None,
     session_name: str = "default",
+    session_file: Optional[Path] = None,
     show_thoughts: bool = True,
     cli_overrides: Optional[dict] = None,
     container_name: Optional[str] = None,
@@ -287,7 +296,9 @@ def interactive_chat(
         print(color(f"[per-alias params: {bits}]", "dim"))
     print(color("commands: /reset, /quit, /set <key> <value>, /params, /thoughts on|off, /help", "dim"))
 
-    messages = load_session(session_name, sys_prompt)
+    effective_session_path = session_file if session_file else session_path(session_name)
+    messages = load_session_from(effective_session_path, sys_prompt)
+    print(color(f"[session: {effective_session_path}]", "dim"))
     # If the user has changed the prompt since the session was saved, reflect that.
     if messages and messages[0].get("role") == "system" and sys_prompt:
         if messages[0]["content"] != sys_prompt:
@@ -357,7 +368,7 @@ def interactive_chat(
         )
         if full:
             messages.append({"role": "assistant", "content": full})
-            save_session(session_name, messages)
+            save_session_to(effective_session_path, messages)
 
-    save_session(session_name, messages)
+    save_session_to(effective_session_path, messages)
     print(color("[session saved]", "dim"))

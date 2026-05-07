@@ -1,0 +1,188 @@
+# hydra-llm shipped embedder catalog. All entries point to community-quantized
+# GGUFs that can be downloaded anonymously (no Hugging Face account required).
+#
+# Embedders are the second model species hydra manages. Unlike chat models, they
+# are run via `llama-server --embeddings` and only emit fixed-size vectors;
+# they have no chat REPL. Used by `hydra-llm index`, `hydra-llm query`, and
+# `hydra-llm chat --rag`.
+#
+# Field reference:
+#   id              short alias used on the CLI
+#   name            human-readable label
+#   family          model family tag (nomic, qwen3, bge, ...)
+#   kind            "code" | "prose" | "both" -- what the embedder is best at
+#   dimensions      vector length emitted by the embedder
+#   max_tokens      max input length the embedder accepts in one call
+#   pooling         "mean" | "cls" | "last" -- llama-server --pooling mode
+#   query_prefix    string prepended to user queries (some models require this)
+#   document_prefix string prepended to indexed chunks (often empty)
+#   filename        local filename to save as (under embedders_dir)
+#   url             direct download URL
+#   size_gb         file size in gigabytes
+#   needs_ram_gb    minimum system RAM to run this embedder
+#   fits_in_vram_gb VRAM needed for full GPU offload
+#   default_port    preferred host port when started (separate range from chat)
+#   gpu_layers      layers to offload (99 = all)
+#   recommended_for hardware tiers this embedder is suitable for
+#   license         informational; consult the model card for actual terms
+#   tags            free-form
+#   notes           short context for the user
+
+embedders:
+
+  # --- prose, lightweight default -------------------------------------------
+  # The recommended starting point for general text. 768d, mean-pooled, fast,
+  # mature in llama.cpp. Pairs well with anything from a 4 GB box up.
+  - id: nomic-embed-text
+    name: Nomic Embed Text v1.5
+    family: nomic
+    kind: prose
+    dimensions: 768
+    max_tokens: 8192
+    pooling: mean
+    query_prefix: "search_query: "
+    document_prefix: "search_document: "
+    filename: nomic-embed-text-v1.5.Q4_K_M.gguf
+    url: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf
+    size_gb: 0.084
+    needs_ram_gb: 1
+    fits_in_vram_gb: 0.5
+    default_port: 19080
+    gpu_layers: 99
+    recommended_for: [tiny, laptop, halo, workstation, server]
+    license: Apache-2.0
+    tags: [text, multilingual, lightweight, default-prose]
+    notes: >-
+      Default prose embedder. Requires the "search_query: " prefix for queries
+      and "search_document: " for documents; hydra applies these automatically.
+
+  # --- code, lightweight -----------------------------------------------------
+  # Smallest of the Qwen3 family that still does well on MTEB Code. Pairs well
+  # with anything from a laptop up. Q8_0 only (Qwen ships no Q4_K_M).
+  - id: qwen3-embed-0.6b
+    name: Qwen3 Embedding 0.6B
+    family: qwen3
+    kind: prose
+    dimensions: 1024
+    max_tokens: 32768
+    pooling: last
+    query_prefix: "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+    document_prefix: ""
+    filename: Qwen3-Embedding-0.6B-Q8_0.gguf
+    url: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf
+    size_gb: 0.639
+    needs_ram_gb: 2
+    fits_in_vram_gb: 1
+    default_port: 19081
+    gpu_layers: 99
+    recommended_for: [laptop, halo, workstation, server]
+    license: Apache-2.0
+    tags: [text, code, multilingual, instruction-aware, mrl]
+    notes: >-
+      Qwen3 is instruction-aware: the prompt embeds a task description that
+      hydra fills in. Strong on retrieval benchmarks for its size. MRL supports
+      truncating output to 32-1024 dimensions if needed.
+
+  # --- code, mid-tier (recommended halo+) ------------------------------------
+  # Sweet spot for serious code retrieval on a halo / workstation. Q4_K_M.
+  - id: qwen3-embed-4b
+    name: Qwen3 Embedding 4B
+    family: qwen3
+    kind: code
+    dimensions: 2560
+    max_tokens: 32768
+    pooling: last
+    query_prefix: "Instruct: Given a code search query, retrieve relevant code that answers the query\nQuery:"
+    document_prefix: ""
+    filename: Qwen3-Embedding-4B-Q4_K_M.gguf
+    url: https://huggingface.co/Qwen/Qwen3-Embedding-4B-GGUF/resolve/main/Qwen3-Embedding-4B-Q4_K_M.gguf
+    size_gb: 2.5
+    needs_ram_gb: 4
+    fits_in_vram_gb: 3
+    default_port: 19082
+    gpu_layers: 99
+    recommended_for: [halo, workstation, server]
+    license: Apache-2.0
+    tags: [code, text, multilingual, instruction-aware, mrl, default-code]
+    notes: >-
+      Default code embedder for halo+ tier. Instruction-aware; hydra customises
+      the task line for code queries.
+
+  # --- code, top-tier --------------------------------------------------------
+  # Ceiling-tier embedder. Heavy; only runs comfortably on a workstation.
+  - id: qwen3-embed-8b
+    name: Qwen3 Embedding 8B
+    family: qwen3
+    kind: code
+    dimensions: 4096
+    max_tokens: 32768
+    pooling: last
+    query_prefix: "Instruct: Given a code search query, retrieve relevant code that answers the query\nQuery:"
+    document_prefix: ""
+    filename: Qwen3-Embedding-8B-Q4_K_M.gguf
+    url: https://huggingface.co/Qwen/Qwen3-Embedding-8B-GGUF/resolve/main/Qwen3-Embedding-8B-Q4_K_M.gguf
+    size_gb: 4.68
+    needs_ram_gb: 6
+    fits_in_vram_gb: 5
+    default_port: 19083
+    gpu_layers: 99
+    recommended_for: [workstation, server]
+    license: Apache-2.0
+    tags: [code, text, multilingual, instruction-aware, mrl, sota-mteb]
+    notes: >-
+      Highest-quality openly-available embedder as of mid-2026. Memory-hungry;
+      consider qwen3-embed-4b unless you specifically need the extra recall.
+
+  # --- multilingual, no-prefix ----------------------------------------------
+  # Useful when you have non-English content and don't want to think about
+  # query prefixes. CLS-pooled. GGUF supports DENSE retrieval only; the sparse
+  # and ColBERT-style heads from upstream are not exported.
+  - id: bge-m3
+    name: BGE-M3
+    family: bge
+    kind: prose
+    dimensions: 1024
+    max_tokens: 8192
+    pooling: cls
+    query_prefix: ""
+    document_prefix: ""
+    filename: bge-m3-Q4_K_M.gguf
+    url: https://huggingface.co/lm-kit/bge-m3-gguf/resolve/main/bge-m3-Q4_K_M.gguf
+    size_gb: 0.438
+    needs_ram_gb: 2
+    fits_in_vram_gb: 1
+    default_port: 19084
+    gpu_layers: 99
+    recommended_for: [laptop, halo, workstation, server]
+    license: MIT
+    tags: [text, multilingual, no-prefix]
+    notes: >-
+      Multilingual prose embedder, no prefix required. GGUF exports the dense
+      head only; sparse/ColBERT modes from upstream FlagEmbedding are not
+      available here.
+
+  # --- code, large-context (workstation) -------------------------------------
+  # Code-tuned variant of nomic-embed. Built on Qwen2.5-Coder-7B; large context
+  # and last-token pooled. Workstation-class memory footprint.
+  - id: nomic-embed-code
+    name: Nomic Embed Code
+    family: nomic
+    kind: code
+    dimensions: 3584
+    max_tokens: 32768
+    pooling: last
+    query_prefix: "Represent this query for searching relevant code: "
+    document_prefix: ""
+    filename: nomic-embed-code.Q4_K_M.gguf
+    url: https://huggingface.co/nomic-ai/nomic-embed-code-GGUF/resolve/main/nomic-embed-code.Q4_K_M.gguf
+    size_gb: 4.38
+    needs_ram_gb: 6
+    fits_in_vram_gb: 5
+    default_port: 19085
+    gpu_layers: 99
+    recommended_for: [workstation, server]
+    license: Apache-2.0
+    tags: [code, retrieval, large-context]
+    notes: >-
+      Code-tuned embedder built on Qwen2.5-Coder-7B. Strong on long code
+      contexts. Heavier than qwen3-embed-4b for similar code-retrieval quality.
