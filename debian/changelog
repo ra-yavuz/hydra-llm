@@ -1,3 +1,45 @@
+hydra-llm (0.2.1-1) unstable; urgency=low
+
+  * RAG mode flip: single-embedder is now the default for `hydra-llm
+    index`. The dual code+prose split with Reciprocal Rank Fusion is
+    opt-in via --dual-index, by passing both --code-embedder and
+    --prose-embedder explicitly, or globally in config.yaml under
+    rag.dual_index. Dual is the right design for very large mixed
+    corpora; single is the cheaper default that fits personal scale
+    without two embedders to manage.
+  * Single-mode storage is now one consolidated chunks.lance table
+    instead of two (code.lance + prose.lance with the same embedder).
+    A `kind` column on every row preserves the classifier tag, so
+    --code-only / --prose-only filters still work via SQL WHERE.
+  * `hydra-llm rag setup` rewrites the menu around the new default:
+    one embedder by default, --dual to install both. JSON output gains
+    a "mode" field. Interactive single-mode prompt advertises --dual
+    for users who want it.
+  * `hydra-llm addlocal <folder>` accepts a directory and bulk-
+    registers every .gguf under it. Group flags (--tier, --family,
+    --license, --gpu-layers, --ram-gb, --vram-gb) apply to all entries.
+    Saves users the tedious one-by-one for a folder of weights from
+    Ollama / LM Studio / a manual download.
+  * `get.sh` (the bash one-liner installer) offers to apt-install
+    docker.io on Debian/Ubuntu when docker is missing, instead of just
+    warning. User still has to run `usermod -aG docker $USER` and log
+    out/in themselves; the script prints the exact line.
+  * Project page restructured: top-of-page yellow disclaimer block
+    replaced with a small note that links to the full disclaimer at
+    the bottom (so first-time visitors are not greeted with a wall of
+    fearful warnings). New "Why Docker" section explains the engine
+    choice; new "Where it runs" section documents Linux / WSL2 /
+    macOS / headless support.
+  * Hub card gains a RAG badge and the body copy spells out
+    "retrieval-augmented generation" once.
+  * Profile README and project README both mention RAG positioning
+    and the full term explicitly so search engines and skim-readers
+    can anchor on it.
+  * Various em dash -> colon/comma/parens scrubs across README and
+    project page per the global "no em dashes" style rule.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Thu, 07 May 2026 12:10:00 +0000
+
 hydra-llm (0.2.0-1) unstable; urgency=low
 
   * RAG (retrieval-augmented generation) lands as a first-class feature.
