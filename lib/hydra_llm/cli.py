@@ -859,10 +859,13 @@ def _resolve_alias_or_index(arg, cfg=None):
 def _autoselect_chat_alias(cfg) -> str | None:
     """No alias given to `hydra-llm chat`. Resolve one.
 
-    - Exactly one chat-model container running: attach to it (no prompt).
-    - Several running: list them and prompt the user for a number.
-    - None running: list installed models and prompt the user to pick one
-      (the chat command will start it after we return).
+    Resolution order:
+      1. Exactly one chat-model container is running -> attach to it.
+      2. Several running -> list with port numbers, prompt for a number.
+      3. None running but exactly one model is downloaded -> use that one
+         (chat path will start it).
+      4. None running, several downloaded -> list with size, prompt.
+      5. Nothing downloaded -> list-online hint and exit.
 
     Returns the chosen alias, or None on user abort / error.
     """
@@ -886,16 +889,18 @@ def _autoselect_chat_alias(cfg) -> str | None:
             return None
         return running[int(ans) - 1]["alias"]
 
-    # No models running. Offer to start one.
+    # No models running. Look at what is downloaded.
     catalog, _ = cfg_mod.load_catalog()
     installed = [m for m in catalog if downloader.is_downloaded(m, cfg)]
     if not installed:
-        print("No models running and none downloaded.", file=sys.stderr)
-        print("       run `hydra-llm list-online` to browse the catalog,",
-              file=sys.stderr)
-        print("       then `hydra-llm download <id>` to fetch one.",
-              file=sys.stderr)
+        print("No models are running and none are downloaded.", file=sys.stderr)
+        print("Browse the catalog: hydra-llm list-online", file=sys.stderr)
+        print("Then download one:  hydra-llm download <id>", file=sys.stderr)
         return None
+    if len(installed) == 1:
+        alias = installed[0]["id"]
+        print(f"Only one model is downloaded ({alias}); will start it for you.")
+        return alias
     print("No models are running. Pick one to start:")
     for i, m in enumerate(installed, 1):
         size = f"{m.get('size_gb', '?')} GB"
@@ -2122,6 +2127,48 @@ def cmd_rag_stores(args):
     return 0
 
 
+def _persist_default_embedder(cfg, embedder_id: str) -> None:
+    """Write rag.default_code_embedder = <id> to the user config so future
+    `hydra-llm index` calls auto-pick it without needing --embedder.
+    """
+    new_cfg = dict(cfg)
+    rag_section = dict(new_cfg.get("rag") or {})
+    rag_section["default_code_embedder"] = embedder_id
+    rag_section["default_prose_embedder"] = embedder_id
+    new_cfg["rag"] = rag_section
+    cfg_mod.save_user_config(new_cfg)
+
+
+def _prompt_pick_embedder(catalog: list[dict], cfg: dict, snap) -> str | None:
+    """Show the full embedder catalog, filtered to fit the user's hardware,
+    and prompt for a numbered choice. Returns the chosen embedder id, or
+    None if the user aborted.
+    """
+    fit = []
+    for e in catalog:
+        verdict, _ = hardware.fits_locally(e, snap)
+        if verdict != "no":
+            fit.append(e)
+    if not fit:
+        print("error: no embedders fit your hardware tier.", file=sys.stderr)
+        return None
+    print("\nEmbedders for your hardware:")
+    for i, e in enumerate(fit, 1):
+        size = f"{e.get('size_gb', '?')} GB"
+        kind = e.get("kind") or "?"
+        installed = "[installed] " if rag_cat_mod.is_downloaded(e, cfg) else ""
+        print(f"  {i}. {e['id']:<22} {kind:<6} {size:<8} {installed}{e.get('name', '')}")
+    try:
+        ans = input(f"\nNumber [1-{len(fit)}]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if not ans.isdigit() or not (1 <= int(ans) <= len(fit)):
+        print("aborted.")
+        return None
+    return fit[int(ans) - 1]["id"]
+
+
 def _recommend_embedders(cfg):
     """Pick the recommended code and prose embedders for the current tier.
 
@@ -2232,6 +2279,11 @@ def cmd_rag_setup(args):
     print(f"hydra-llm RAG setup\n")
     print(f"Detected hardware tier: {tier['id']}  ({tier['name']})")
     print(f"Mode: {'dual-index (code + prose embedders)' if dual else 'single-embedder'}\n")
+
+    # In dual mode the chosen list has both code and prose entries; the
+    # existing flow can stay as it is. In single mode we want the new menu
+    # that surfaces already-installed embedders as alternatives so we never
+    # force a 2.5 GB download on a user who has nomic-embed-text already.
     if dual:
         print(f"Recommended embedders for your tier:")
         for label, e in (("code", chosen[0] if chosen else None),
@@ -2241,34 +2293,121 @@ def cmd_rag_setup(args):
             installed = "(already installed)" if rag_cat_mod.is_downloaded(e, cfg) else ""
             print(f"  {label:<6} {e['id']:<22} {e.get('size_gb', '?')} GB  {installed}")
         print()
-        print("Switch back to single-embedder mode with: hydra-llm rag setup")
-    else:
-        e = chosen[0]
-        installed = "(already installed)" if rag_cat_mod.is_downloaded(e, cfg) else ""
-        print(f"Recommended embedder: {e['id']}  ({e.get('size_gb', '?')} GB)  {installed}")
-        notes = (e.get('notes') or '').strip().splitlines()
-        if notes:
-            print(f"  {notes[0][:78]}")
+        print("About dual-index mode:")
+        print("  Pro:  separate embedders for code vs prose; results fused via RRF")
+        print("        at query time. Genuinely better retrieval on very large mixed")
+        print("        codebases (think monorepo with both source and docs).")
+        print("  Con:  two embedder GGUFs to download, two embedder containers running,")
+        print("        two indexes per folder. For personal-scale projects the quality")
+        print("        difference is small.")
         print()
-        print("Want a separate code embedder + prose embedder fused at query time?")
-        print("Re-run with: hydra-llm rag setup --dual")
-
-    if not to_install:
-        print(f"\nAll recommended embedders are already installed. RAG is ready.")
-        print(f"Try: hydra-llm index .")
+        print("Switch back to single-embedder mode any time with: hydra-llm rag setup")
+        print()
+        if not to_install:
+            print(f"All recommended embedders are already installed. RAG is ready.")
+            print(f"Try: hydra-llm index .")
+            return 0
+        total_gb = sum(e.get("size_gb") or 0.0 for e in to_install)
+        if not args.non_interactive:
+            ans = input(f"Download {len(to_install)} embedder(s), {total_gb:.2f} GB total? [Y/n] ").strip().lower()
+            if ans and ans not in ("y", "yes"):
+                print("aborted.")
+                return 0
+        for e in to_install:
+            rc = cmd_rag_download(type("a", (), {"alias": e["id"], "force": False, "json": False}))
+            if rc != 0:
+                return rc
+        print(f"\nRAG ready. Try:")
+        print(f"  hydra-llm index .")
+        print(f"  hydra-llm chat <model> --rag .")
         return 0
 
-    total_gb = sum(e.get("size_gb") or 0.0 for e in to_install)
-    if not args.non_interactive:
-        ans = input(f"\nDownload {len(to_install)} embedder(s), {total_gb:.2f} GB total? [Y/n] ").strip().lower()
-        if ans and ans not in ("y", "yes"):
+    # Single-embedder mode: the menu.
+    rec = chosen[0]
+    rec_installed = rag_cat_mod.is_downloaded(rec, cfg)
+    full_catalog, _ = rag_cat_mod.load_embedder_catalog()
+    other_installed = [
+        e for e in full_catalog
+        if e["id"] != rec["id"] and rag_cat_mod.is_downloaded(e, cfg)
+    ]
+
+    print(f"Recommended embedder for your tier: {rec['id']}  ({rec.get('size_gb', '?')} GB)"
+          + ("  (already installed)" if rec_installed else "  (NOT installed)"))
+    rec_notes = (rec.get('notes') or '').strip().splitlines()
+    if rec_notes:
+        print(f"  {rec_notes[0][:78]}")
+    print()
+
+    print("About dual-index mode (currently OFF):")
+    print("  Single-embedder runs ONE embedder for both code and prose chunks;")
+    print("  one GGUF, one container, one index per folder. Cheap, simple, fine")
+    print("  for most personal-scale work.")
+    print()
+    print("  Dual-index runs TWO embedders (one tuned for code, one for prose)")
+    print("  and fuses results via Reciprocal Rank Fusion at query time. Better")
+    print("  retrieval on big mixed code+prose corpora; costs an extra embedder")
+    print("  download and an extra container at query time.")
+    print()
+    print("  Most users want single. Turn dual on later with:")
+    print("    hydra-llm rag setup --dual")
+    print("  or set rag.dual_index: true in ~/.config/hydra-llm/config.yaml.")
+    print("  Switching modes requires a one-time re-index of existing folders.")
+    print()
+
+    if rec_installed:
+        print("RAG is ready. Try: hydra-llm index .")
+        return 0
+
+    # Build the menu of choices. Recommendation goes first; already-installed
+    # alternatives next; "pick from full catalog" last; "cancel" always.
+    choices: list[tuple[str, str, dict | None]] = []
+    choices.append(("download", f"Download recommended ({rec['id']}, {rec.get('size_gb', '?')} GB)", rec))
+    for e in other_installed:
+        kind_label = e.get("kind") or "embedder"
+        choices.append(("use", f"Use already-installed {e['id']} ({kind_label})", e))
+    choices.append(("pick", "Pick a different embedder from the catalog", None))
+    choices.append(("cancel", "Cancel; do nothing", None))
+
+    print("Options:")
+    for i, (_, label, _e) in enumerate(choices, 1):
+        print(f"  {i}. {label}")
+    if args.non_interactive:
+        action, _label, target = choices[0]
+    else:
+        try:
+            ans = input(f"\nNumber [1-{len(choices)}, default 1]: ").strip() or "1"
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not ans.isdigit() or not (1 <= int(ans) <= len(choices)):
             print("aborted.")
             return 0
+        action, _label, target = choices[int(ans) - 1]
 
-    for e in to_install:
-        rc = cmd_rag_download(type("a", (), {"alias": e["id"], "force": False, "json": False}))
+    if action == "cancel":
+        print("aborted.")
+        return 0
+    if action == "download":
+        rc = cmd_rag_download(type("a", (), {"alias": target["id"], "force": False, "json": False}))
         if rc != 0:
             return rc
+    elif action == "use":
+        # Already on disk; nothing to download. Mark this as the user's
+        # default by writing rag.default_code_embedder so subsequent
+        # `hydra-llm index` calls pick it without an explicit --embedder.
+        _persist_default_embedder(cfg, target["id"])
+        print(f"Using {target['id']} (already installed).")
+    elif action == "pick":
+        chosen_id = _prompt_pick_embedder(full_catalog, cfg, snap)
+        if not chosen_id:
+            return 0
+        e = rag_cat_mod.find_embedder(chosen_id)
+        if not rag_cat_mod.is_downloaded(e, cfg):
+            rc = cmd_rag_download(type("a", (), {"alias": chosen_id, "force": False, "json": False}))
+            if rc != 0:
+                return rc
+        _persist_default_embedder(cfg, chosen_id)
+
     print(f"\nRAG ready. Try:")
     print(f"  hydra-llm index .")
     print(f"  hydra-llm chat <model> --rag .")
