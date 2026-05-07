@@ -10,9 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
-ARG LLAMA_CPP_REF=master
+# Pinned llama.cpp commit. Bumping this is a release-level decision so
+# every user gets the same image. To bump: pick a known-good commit
+# (Qwen3 embedders are sensitive to GGUF parser changes), update both
+# Dockerfile.vulkan and Dockerfile.cpu in lockstep, bump hydra-llm
+# version, rebuild, ship.
+ARG LLAMA_CPP_REF=e43431b38115
 WORKDIR /src
-RUN git clone --depth 1 --branch "$LLAMA_CPP_REF" https://github.com/ggerganov/llama.cpp.git . \
+RUN git clone https://github.com/ggml-org/llama.cpp.git . \
+ && git checkout "$LLAMA_CPP_REF" \
  && cmake -B build -DGGML_VULKAN=1 -DCMAKE_BUILD_TYPE=Release \
  && cmake --build build --config Release -j "$(nproc)" \
  && mkdir -p /opt/llama \

@@ -43,10 +43,24 @@ def main():
     sub.add_parser("doctor", help="detect hardware and recommend a tier",
                    parents=[json_parent]).set_defaults(func=cmd_doctor)
 
-    p = sub.add_parser("setup", help="first-run: build image, fetch starter model, smoke test")
+    p = sub.add_parser("setup", help="first-run: build image, fetch starter model, smoke test",
+                       description=(
+                           "Builds the llama.cpp Docker image (Vulkan or CPU "
+                           "depending on hardware), fetches a starter model, "
+                           "and runs a smoke test. Idempotent: skipping any "
+                           "step that already succeeded.\n\n"
+                           "Use --rebuild to force a from-scratch image build "
+                           "against the llama.cpp commit pinned by this version "
+                           "of hydra-llm. Useful after a hydra-llm upgrade if "
+                           "the new release bumped the pin and you want the new "
+                           "image without waiting for it to be re-needed."
+                       ),
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--no-build", action="store_true", help="skip docker image build")
     p.add_argument("--no-download", action="store_true", help="skip starter model download")
     p.add_argument("--no-test", action="store_true", help="skip the smoke-test stage")
+    p.add_argument("--rebuild", action="store_true",
+                   help="rebuild the engine image even if already present")
     p.add_argument("--model", default=None, help="starter model id (default: tinyllama-1.1b)")
     p.add_argument("--image", choices=["auto", "vulkan", "cpu"], default="auto",
                    help="force a specific image variant instead of auto-detecting")
@@ -3014,6 +3028,7 @@ def cmd_setup(args):
         test=not args.no_test,
         model_id=args.model or setup_mod.DEFAULT_SMOKE_MODEL,
         image_override=image_override,
+        force_rebuild=bool(args.rebuild),
     )
 
 

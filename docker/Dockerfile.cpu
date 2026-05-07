@@ -8,9 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git ca-certificates curl libopenblas-dev \
  && rm -rf /var/lib/apt/lists/*
 
-ARG LLAMA_CPP_REF=master
+# Pinned llama.cpp commit. See Dockerfile.vulkan for the bump procedure;
+# both files must use the same ref so users get consistent behaviour
+# regardless of which engine variant their machine selects.
+ARG LLAMA_CPP_REF=e43431b38115
 WORKDIR /src
-RUN git clone --depth 1 --branch "$LLAMA_CPP_REF" https://github.com/ggerganov/llama.cpp.git . \
+RUN git clone https://github.com/ggml-org/llama.cpp.git . \
+ && git checkout "$LLAMA_CPP_REF" \
  && cmake -B build -DGGML_OPENBLAS=1 -DCMAKE_BUILD_TYPE=Release \
  && cmake --build build --config Release -j "$(nproc)" \
  && mkdir -p /opt/llama \

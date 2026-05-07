@@ -96,25 +96,33 @@ def step_pick_image_variant() -> str:
     return "cpu"
 
 
-def step_build_image(variant: str, source_dir: Path = None) -> bool:
-    """Builds (locally) the requested image if it's not already present.
+def step_build_image(variant: str, source_dir: Path = None,
+                     force: bool = False, llama_ref: str = "master") -> bool:
+    """Builds (locally) the requested image.
+
+    By default this is idempotent: if the image already exists locally we
+    return without rebuilding. Pass force=True to rebuild against current
+    llama.cpp master (used by `hydra-llm engine rebuild` to refresh stale
+    images). The Dockerfile pulls llama.cpp from `llama_ref` (default
+    master); overriding this lets you pin a specific commit or tag.
 
     source_dir is the path to the hydra-llm source tree containing docker/.
     Defaults to the standard install location, with a dev-tree fallback.
     """
     banner(f"Preparing image hydra-llm/llama-server:{variant}")
     tag = f"hydra-llm/llama-server:{variant}"
-    # Already built?
-    try:
-        out = subprocess.run(
-            ["docker", "image", "inspect", tag],
-            capture_output=True, text=True, timeout=10,
-        )
-        if out.returncode == 0:
-            ok(f"image already present")
-            return True
-    except subprocess.SubprocessError:
-        pass
+    # Already built? Skip unless forced.
+    if not force:
+        try:
+            out = subprocess.run(
+                ["docker", "image", "inspect", tag],
+                capture_output=True, text=True, timeout=10,
+            )
+            if out.returncode == 0:
+                ok(f"image already present")
+                return True
+        except subprocess.SubprocessError:
+            pass
 
     # Find the Dockerfile.
     if source_dir is None:
@@ -273,7 +281,8 @@ def step_smoke_test(model_id: str = DEFAULT_SMOKE_MODEL) -> bool:
 
 def run_setup(*, build: bool = True, download: bool = True, test: bool = True,
               model_id: str = DEFAULT_SMOKE_MODEL,
-              image_override: str = None) -> int:
+              image_override: str = None,
+              force_rebuild: bool = False) -> int:
     """Runs the full first-run setup. Returns 0 on full success.
 
     Build strategy:
@@ -281,6 +290,8 @@ def run_setup(*, build: bool = True, download: bool = True, test: bool = True,
       - Otherwise, the preferred image is picked based on /dev/dri presence.
         We always also build the CPU image as a safety net so users can fall
         back to it manually with `hydra-llm config set image cpu`.
+      - force_rebuild bypasses the "image already present" early-return so
+        users can refresh against a newer pinned llama.cpp ref after upgrade.
     """
     paths.ensure_user_dirs()
 
@@ -297,18 +308,18 @@ def run_setup(*, build: bool = True, download: bool = True, test: bool = True,
 
     have_working_image = False
     if build:
-        if step_build_image(preferred):
+        if step_build_image(preferred, force=force_rebuild):
             have_working_image = True
         else:
             if preferred != "cpu":
                 warn(f"falling back to CPU image since {preferred} build failed")
-                if step_build_image("cpu"):
+                if step_build_image("cpu", force=force_rebuild):
                     have_working_image = True
                     preferred = "cpu"
         if also_build_cpu and preferred != "cpu":
             # Best effort; not fatal if it fails.
             banner("Also building CPU image as a safety-net fallback")
-            if not step_build_image("cpu"):
+            if not step_build_image("cpu", force=force_rebuild):
                 warn("CPU fallback image build failed; only the preferred image is available")
         if not have_working_image:
             fail("could not build any usable image",
