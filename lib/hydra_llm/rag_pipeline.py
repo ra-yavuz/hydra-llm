@@ -186,7 +186,9 @@ def execute_plan(plan: IndexPlan,
                  *,
                  cfg: dict | None = None,
                  batch_size: int = 16,
-                 progress=None) -> IndexResult:
+                 progress=None,
+                 register: bool = True,
+                 tags: list[str] | None = None) -> IndexResult:
     """Run the plan: ensure embedders are up, chunk + embed changed files,
     delete chunks for vanished/changed files, persist meta + registry.
 
@@ -319,7 +321,8 @@ def execute_plan(plan: IndexPlan,
     if prev_meta.get("created") and not plan.full_rebuild:
         meta["created"] = prev_meta["created"]
     rag_store.write_meta(plan.root, meta)
-    rag_store.register_store(plan.root)
+    if register:
+        rag_store.register_store(plan.root, tags=tags)
 
     return IndexResult(
         plan=plan,
@@ -431,6 +434,128 @@ def retrieve(root: Path,
             entry["kinds"].append(kind)
             entry["ranks"][kind] = rank
             entry["rrf"] += 1.0 / (rrf_k + rank)
+
+    ordered = sorted(fused.values(), key=lambda x: x["rrf"], reverse=True)
+    return ordered[:top_k]
+
+
+def retrieve_federated(query: str,
+                       *,
+                       store_paths: list[str] | None = None,
+                       tags: list[str] | None = None,
+                       top_k: int = 5,
+                       cfg: dict | None = None,
+                       code_only: bool = False,
+                       prose_only: bool = False,
+                       rrf_k: int = 60) -> list[dict]:
+    """Cross-folder retrieval: union of stores filtered by paths/tags, RRF
+    fusion across all per-store hits.
+
+    If neither `store_paths` nor `tags` is given, queries every registered
+    store. Each result dict includes `store_path` so the caller can render
+    "which folder did this come from".
+    """
+    if cfg is None:
+        cfg = cfg_mod.load_user_config()
+    matching = rag_store.stores_matching(paths_filter=store_paths, tags_filter=tags)
+    if not matching:
+        if store_paths or tags:
+            raise RuntimeError("no stores match the given filter")
+        raise RuntimeError(
+            "no indexed folders. Run `hydra-llm index <path>` somewhere first."
+        )
+
+    # Pre-flight: which embedders do we need? Bring them up once, share
+    # across stores. If a store's embedder isn't installed, skip the store
+    # with a soft warning rather than aborting the whole query.
+    needed_embedder_ids = set()
+    catalog, _ = rag_catalog.load_embedder_catalog()
+    cat_by_id = {e["id"]: e for e in catalog}
+    plans = []  # (store_path, code_e, prose_e, code_meta, prose_meta)
+    skipped: list[tuple[str, str]] = []
+    for s in matching:
+        rp = Path(s["path"])
+        if not (rp / rag_store.INDEX_DIR_NAME).is_dir():
+            skipped.append((str(rp), "missing-index-dir"))
+            continue
+        meta = rag_store.read_meta(rp)
+        ce_id = (meta.get("code_embedder") or {}).get("id")
+        pe_id = (meta.get("prose_embedder") or {}).get("id")
+        ce = cat_by_id.get(ce_id) if ce_id else None
+        pe = cat_by_id.get(pe_id) if pe_id else None
+        if code_only:
+            pe = None
+        if prose_only:
+            ce = None
+        if ce is None and pe is None:
+            skipped.append((str(rp), "no-embedder-for-mode"))
+            continue
+        # Drop the embedder if its GGUF isn't on disk.
+        if ce and not rag_catalog.is_downloaded(ce, cfg):
+            skipped.append((str(rp), f"embedder-missing:{ce['id']}"))
+            ce = None
+        if pe and not rag_catalog.is_downloaded(pe, cfg):
+            if ce is None:
+                skipped.append((str(rp), f"embedder-missing:{pe['id']}"))
+                continue
+            pe = None
+        if ce is None and pe is None:
+            continue
+        if ce:
+            needed_embedder_ids.add(ce["id"])
+        if pe:
+            needed_embedder_ids.add(pe["id"])
+        plans.append((str(rp), ce, pe))
+
+    if not plans:
+        msg = "no usable stores found"
+        if skipped:
+            details = "; ".join(f"{p}: {why}" for p, why in skipped[:5])
+            msg += f" ({details})"
+        raise RuntimeError(msg)
+
+    # Bring up each distinct embedder once.
+    for eid in needed_embedder_ids:
+        e = cat_by_id[eid]
+        ok, info = docker_driver.ensure_embedder_running(e, cfg)
+        if not ok:
+            raise RuntimeError(f"failed to start embedder {eid}: "
+                               f"{info.get('error')}")
+
+    # Embed the query once per distinct embedder; reuse across stores.
+    query_vecs: dict[str, list[float]] = {}
+    for eid in needed_embedder_ids:
+        e = cat_by_id[eid]
+        v = embedding.normalize(embedding.embed_query(e, query))
+        query_vecs[eid] = v.tolist()
+
+    # Search each store/kind, collect hits with their store path attached.
+    fused: dict[str, dict] = {}
+    for store_path, ce, pe in plans:
+        rp = Path(store_path)
+        per_kind = {}
+        if ce:
+            per_kind["code"] = rag_store.search(rp, "code", query_vecs[ce["id"]],
+                                                top_k=top_k * 3)
+        if pe:
+            per_kind["prose"] = rag_store.search(rp, "prose", query_vecs[pe["id"]],
+                                                 top_k=top_k * 3)
+        for kind, hits in per_kind.items():
+            for rank, h in enumerate(hits, start=1):
+                cid = h.get("chunk_id")
+                if not cid:
+                    continue
+                # Compose a globally-unique fused-id so two stores' chunks
+                # with the same uuid (theoretically possible) don't merge.
+                fid = f"{store_path}|{cid}"
+                entry = fused.get(fid)
+                if entry is None:
+                    entry = {**h, "store_path": store_path,
+                             "kinds": [], "ranks": {}, "rrf": 0.0}
+                    fused[fid] = entry
+                entry["kinds"].append(kind)
+                entry["ranks"][kind] = rank
+                entry["rrf"] += 1.0 / (rrf_k + rank)
 
     ordered = sorted(fused.values(), key=lambda x: x["rrf"], reverse=True)
     return ordered[:top_k]

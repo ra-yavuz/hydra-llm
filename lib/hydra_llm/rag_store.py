@@ -215,19 +215,71 @@ def save_registry(reg: dict) -> Path:
     return p
 
 
-def register_store(root: Path) -> None:
-    """Add `root` to the global stores registry (idempotent, by absolute path)."""
+def register_store(root: Path, tags: list[str] | None = None) -> None:
+    """Add `root` to the global stores registry (idempotent, by absolute path).
+
+    If `tags` is given, replace the store's tag list with it. Pass an empty
+    list to clear tags; pass None (the default) to leave existing tags alone.
+    """
     rp = str(Path(root).expanduser().resolve())
     reg = load_registry()
     stores = reg.get("stores") or []
     for s in stores:
         if s.get("path") == rp:
             s["last_indexed"] = now_iso()
+            if tags is not None:
+                s["tags"] = sorted(set(tags))
             save_registry(reg)
             return
-    stores.append({"path": rp, "first_indexed": now_iso(), "last_indexed": now_iso()})
+    new_entry: dict = {"path": rp,
+                       "first_indexed": now_iso(),
+                       "last_indexed": now_iso()}
+    if tags is not None:
+        new_entry["tags"] = sorted(set(tags))
+    stores.append(new_entry)
     reg["stores"] = stores
     save_registry(reg)
+
+
+def store_tags(root: Path) -> list[str]:
+    """Return the tags for a registered store (or [] if not registered)."""
+    rp = str(Path(root).expanduser().resolve())
+    reg = load_registry()
+    for s in reg.get("stores") or []:
+        if s.get("path") == rp:
+            return list(s.get("tags") or [])
+    return []
+
+
+def stores_matching(*, paths_filter: list[str] | None = None,
+                    tags_filter: list[str] | None = None) -> list[dict]:
+    """Filter the registry by paths and/or tags.
+
+    `paths_filter` matches if any of the given paths is exactly the store
+    path or a parent directory of it (so `--stores ~/projects` covers all
+    indexes under that tree).
+
+    `tags_filter` requires the store to have at least one of the given tags.
+    Both filters apply if both are given.
+    """
+    reg = load_registry()
+    out = []
+    norm_paths = None
+    if paths_filter:
+        norm_paths = [str(Path(p).expanduser().resolve()) for p in paths_filter]
+    norm_tags = set(tags_filter) if tags_filter else None
+    for s in reg.get("stores") or []:
+        sp = s.get("path", "")
+        if norm_paths is not None:
+            if not any(sp == np or sp.startswith(np.rstrip("/") + "/")
+                       for np in norm_paths):
+                continue
+        if norm_tags is not None:
+            stags = set(s.get("tags") or [])
+            if not (stags & norm_tags):
+                continue
+        out.append(s)
+    return out
 
 
 def unregister_store(root: Path) -> bool:

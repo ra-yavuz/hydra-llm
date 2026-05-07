@@ -235,6 +235,7 @@ def interactive_chat(
     show_thoughts: bool = True,
     cli_overrides: Optional[dict] = None,
     container_name: Optional[str] = None,
+    rag_config=None,  # rag_chat.RagConfig | None
 ):
     """Interactive REPL.
 
@@ -294,7 +295,13 @@ def interactive_chat(
     if over_keys:
         bits = ", ".join(f"{k}={chat_params[k]}({src})" for k, src in over_keys.items())
         print(color(f"[per-alias params: {bits}]", "dim"))
-    print(color("commands: /reset, /quit, /set <key> <value>, /params, /thoughts on|off, /help", "dim"))
+    if rag_config is not None and rag_config.enabled:
+        print(color(f"[rag: {rag_config.scope_label()} - top {rag_config.top_k}]", "dim"))
+    cmds = "/reset, /quit, /set <key> <value>, /params, /thoughts on|off"
+    if rag_config is not None:
+        cmds += ", /rag on|off, /rag-show on|off, /rag-chunks on|off, /rag <text>"
+    cmds += ", /help"
+    print(color(f"commands: {cmds}", "dim"))
 
     effective_session_path = session_file if session_file else session_path(session_name)
     messages = load_session_from(effective_session_path, sys_prompt)
@@ -328,6 +335,11 @@ def interactive_chat(
             print(f"/set <key> <val>   change a param for this session only")
             print(f"                   (keys: {', '.join(overrides_mod.PARAM_DEFAULTS)})")
             print("/thoughts on|off   show or hide reasoning_content blocks")
+            if rag_config is not None:
+                print("/rag on|off        toggle retrieval for this session")
+                print("/rag-show on|off   show or hide the [rag: N chunks] line")
+                print("/rag-chunks on|off show or hide retrieved chunk text in the terminal")
+                print("/rag <text>        one-off retrieval, prints hits without sending to model")
             continue
         if u == "/params":
             for k in overrides_mod.PARAM_DEFAULTS:
@@ -358,11 +370,68 @@ def interactive_chat(
             else:
                 print("usage: /thoughts on|off")
             continue
+        if rag_config is not None and u.startswith("/rag"):
+            parts = u.split(maxsplit=1)
+            verb = parts[0]
+            rest = parts[1].strip() if len(parts) > 1 else ""
+            if verb == "/rag" and rest in ("on", "off"):
+                rag_config.enabled = (rest == "on")
+                print(color(f"[rag: {'on' if rag_config.enabled else 'off'}]", "yellow"))
+                continue
+            if verb == "/rag-show" and rest in ("on", "off"):
+                rag_config.show_attached = (rest == "on")
+                print(color(f"[rag-show: {'on' if rag_config.show_attached else 'off'}]", "yellow"))
+                continue
+            if verb == "/rag-chunks" and rest in ("on", "off"):
+                rag_config.show_chunks = (rest == "on")
+                print(color(f"[rag-chunks: {'on' if rag_config.show_chunks else 'off'}]", "yellow"))
+                continue
+            if verb == "/rag" and rest:
+                # One-off retrieval, no model call.
+                from . import rag_chat
+                _, hits = rag_chat.attach_context(rag_config, rest)
+                if not hits:
+                    print(color("(no results)", "dim"))
+                else:
+                    for i, h in enumerate(hits, 1):
+                        store = h.get("store_path")
+                        loc = h.get("rel_path", "?")
+                        line_range = f"{h.get('line_start')}-{h.get('line_end')}"
+                        location = f"{store}/{loc}:{line_range}" if store else f"{loc}:{line_range}"
+                        print(color(f"\n{i}. {location}", "bold"))
+                        for line in (h.get("text") or "").rstrip().splitlines()[:8]:
+                            print(f"   {line[:100]}")
+                continue
+            print("usage: /rag on|off, /rag-show on|off, /rag-chunks on|off, /rag <text>")
+            continue
 
+        # Augment with retrieved context if RAG is on. Persist the original
+        # user text into history; only the per-request copy carries context,
+        # so saved sessions stay small and re-augment fresh each turn.
+        request_messages = list(messages)
+        rag_hits: list[dict] = []
+        if rag_config is not None and rag_config.enabled:
+            from . import rag_chat
+            augmented, rag_hits = rag_chat.attach_context(rag_config, user)
+            if rag_config.show_attached:
+                print(color(rag_chat.render_attached_line(rag_hits), "dim"))
+            if rag_config.show_chunks and rag_hits:
+                for h in rag_hits:
+                    store = h.get("store_path")
+                    loc = h.get("rel_path", "?")
+                    line_range = f"{h.get('line_start')}-{h.get('line_end')}"
+                    location = f"{store}/{loc}:{line_range}" if store else f"{loc}:{line_range}"
+                    print(color(f"  ── {location}", "dim"))
+            request_messages.append({"role": "user", "content": augmented})
+        else:
+            request_messages.append({"role": "user", "content": user})
+
+        # Persist original user text (not augmented) so resumes stay clean.
         messages.append({"role": "user", "content": user})
+
         sys.stdout.write("\n" + color("model> ", "bold", "magenta"))
         full, _t = stream_chat(
-            base_url, messages,
+            base_url, request_messages,
             sampling_params=chat_params,
             show_thoughts=show_thoughts,
         )

@@ -233,6 +233,23 @@ def main():
     p.add_argument("--temperature", type=float)
     p.add_argument("--max-tokens", type=int)
     p.add_argument("--no-thoughts", action="store_true", help="hide reasoning output")
+    # RAG flags. --rag and --rag-all and --rag-tag are mutually exclusive
+    # at runtime; we don't enforce it at parse time so the user can have
+    # one in shell history without the parser refusing.
+    p.add_argument("--rag", help="path to a folder with .hydra-index/ -- retrieve at every turn")
+    p.add_argument("--rag-all", action="store_true",
+                   help="retrieve from every registered RAG store at every turn")
+    p.add_argument("--rag-tag", action="append", default=[],
+                   help="retrieve from stores with this tag (repeatable, federated)")
+    p.add_argument("--rag-stores", default="",
+                   help="comma-separated list of store paths to retrieve from")
+    p.add_argument("--rag-top-k", type=int, default=3, help="how many chunks to attach per turn")
+    p.add_argument("--rag-code-only", action="store_true")
+    p.add_argument("--rag-prose-only", action="store_true")
+    p.add_argument("--rag-show-chunks", action="store_true",
+                   help="echo retrieved chunk locations to the terminal each turn")
+    p.add_argument("--no-rag", action="store_true",
+                   help="explicitly disable RAG, even if the catalog entry has rag_index set")
     p.set_defaults(func=cmd_chat)
 
     p = sub.add_parser("persona", help="manage personas")
@@ -344,6 +361,9 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="print plan, don't embed")
     p.add_argument("--no-register", action="store_true",
                    help="don't add this path to the global stores registry")
+    p.add_argument("--tag", action="append", default=[],
+                   help="tag this store with <tag> (repeatable). Used by `query --tag` "
+                        "and `chat --rag-tag` to scope searches.")
     p.set_defaults(func=cmd_index)
 
     p = sub.add_parser(
@@ -352,13 +372,25 @@ def main():
         parents=[json_parent],
         description=(
             "Embed the query, search the index, return top-K chunks ordered "
-            "by Reciprocal Rank Fusion across the code and prose indexes."
+            "by Reciprocal Rank Fusion across the code and prose indexes.\n\n"
+            "Default scope:\n"
+            "  - if cwd has a .hydra-index/, search just that store\n"
+            "  - else, search every registered store (federated)\n\n"
+            "Override with --in, --stores, or --tag."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("text", help="natural-language query")
-    p.add_argument("--in", dest="in_path", default=".",
-                   help="folder containing the .hydra-index/ to search (default: cwd)")
+    p.add_argument("--in", dest="in_path",
+                   help="folder containing the .hydra-index/ to search (default: cwd "
+                        "if it has an index, else all registered stores)")
+    p.add_argument("--stores", default="",
+                   help="comma-separated list of store paths to search "
+                        "(matches exact path or any descendant)")
+    p.add_argument("--tag", action="append", default=[],
+                   help="search only stores with this tag (repeatable). Implies federated.")
+    p.add_argument("--all", action="store_true",
+                   help="explicitly federate across every registered store")
     p.add_argument("--top-k", type=int, default=5, help="how many results to return")
     p.add_argument("--code-only", action="store_true", help="search only the code index")
     p.add_argument("--prose-only", action="store_true", help="search only the prose index")
@@ -1353,6 +1385,8 @@ def cmd_chat(args):
                   file=sys.stderr)
             return 1
 
+    rag_config = _build_rag_config(args, entry)
+
     chat_mod.interactive_chat(
         base_url=base_url,
         persona=persona,
@@ -1363,8 +1397,65 @@ def cmd_chat(args):
         show_thoughts=show_thoughts,
         cli_overrides=cli_overrides,
         container_name=container_name,
+        rag_config=rag_config,
     )
     return 0
+
+
+def _build_rag_config(args, catalog_entry):
+    """Construct a rag_chat.RagConfig from CLI flags + optional catalog field.
+
+    Resolution priority:
+      --no-rag                           -> None (RAG disabled this session)
+      --rag <path>                       -> single-store
+      --rag-all / --rag-tag / --rag-stores -> federated
+      catalog_entry["rag_index"]         -> single-store (path); soft-warn if path missing
+      otherwise                          -> None
+    """
+    if args.no_rag:
+        return None
+    from . import rag_chat as rag_chat_mod
+
+    # Explicit CLI scoping wins over the catalog field.
+    cli_paths = [p.strip() for p in (args.rag_stores or "").split(",") if p.strip()]
+    if args.rag:
+        path = Path(args.rag).expanduser().resolve()
+        if not _has_index(path):
+            # Soft warn; user might want to chat anyway and run /rag off later.
+            print(f"warning: no .hydra-index/ at {path}; "
+                  f"chat will run with retrieval disabled until you index it",
+                  file=sys.stderr)
+            cfg = rag_chat_mod.RagConfig(enabled=False)
+        else:
+            cfg = rag_chat_mod.RagConfig(single_store=path)
+    elif args.rag_all or args.rag_tag or cli_paths:
+        cfg = rag_chat_mod.RagConfig(
+            federated_all=bool(args.rag_all),
+            tags=list(args.rag_tag or []),
+            store_paths=cli_paths,
+        )
+    elif catalog_entry and catalog_entry.get("rag_index"):
+        path = Path(catalog_entry["rag_index"]).expanduser().resolve()
+        if not _has_index(path):
+            print(f"warning: catalog `rag_index: {catalog_entry['rag_index']}` "
+                  f"resolves to {path} which has no .hydra-index/. "
+                  f"Chat will run without retrieval. Use `hydra-llm index {path}` "
+                  f"to fix.", file=sys.stderr)
+            return None
+        cfg = rag_chat_mod.RagConfig(single_store=path)
+    else:
+        return None
+
+    cfg.top_k = args.rag_top_k
+    cfg.code_only = args.rag_code_only
+    cfg.prose_only = args.rag_prose_only
+    cfg.show_chunks = args.rag_show_chunks
+    return cfg
+
+
+def _has_index(path: Path) -> bool:
+    """True if the folder has a .hydra-index/ directory we can query."""
+    return (Path(path) / rag_store_mod.INDEX_DIR_NAME).is_dir()
 
 
 # --- personas -----------------------------------------------------------------
@@ -1621,10 +1712,11 @@ def cmd_rag_stores(args):
         print("No indexed folders.")
         print("Try `hydra-llm index <path>` to create one.")
         return 0
-    print(f"{'PATH':<60} {'CHUNKS':<13} EMBEDDERS")
+    print(f"{'PATH':<55} {'CHUNKS':<10} {'TAGS':<20} EMBEDDERS")
     for s in enriched:
         if s.get("missing"):
-            print(f"{s['path']:<60} {'(gone)':<13} -- (run `hydra-llm rag stores --prune`)")
+            print(f"{s['path']:<55} {'(gone)':<10} {'':<20} "
+                  f"-- (run `hydra-llm rag stores --prune`)")
             continue
         chunks = f"{s.get('code_chunks', 0)}+{s.get('prose_chunks', 0)}"
         embedders = []
@@ -1632,7 +1724,10 @@ def cmd_rag_stores(args):
             embedders.append(s["code_embedder"])
         if s.get("prose_embedder") and s.get("prose_embedder") != s.get("code_embedder"):
             embedders.append(s["prose_embedder"])
-        print(f"{s['path']:<60} {chunks:<13} {', '.join(embedders) or '-'}")
+        tags = ",".join(s.get("tags") or []) or "-"
+        if len(tags) > 19:
+            tags = tags[:18] + "…"
+        print(f"{s['path']:<55} {chunks:<10} {tags:<20} {', '.join(embedders) or '-'}")
     return 0
 
 
@@ -1733,8 +1828,19 @@ def cmd_index(args):
     if not args.json:
         print(f"Indexing {plan.root}")
 
+    # Resolve tags: explicit --tag wins; if none given, preserve any tags
+    # the store may already have so re-running `index` doesn't strip them.
+    explicit_tags = list(args.tag or [])
+    effective_tags: list[str] | None
+    if explicit_tags:
+        effective_tags = explicit_tags
+    else:
+        effective_tags = None  # leave existing tags alone in registry
+
     try:
-        result = rag_pipeline.execute_plan(plan, cfg=cfg)
+        result = rag_pipeline.execute_plan(plan, cfg=cfg,
+                                           register=not args.no_register,
+                                           tags=effective_tags)
     except RuntimeError as e:
         if args.json:
             print(json.dumps({"ok": False, "error": str(e)}))
@@ -1781,15 +1887,47 @@ def cmd_query(args):
         else:
             print(f"error: {msg}", file=sys.stderr)
         return 1
+
+    # Resolve scope:
+    #   - --all or --tag or --stores -> federated
+    #   - --in <path> -> single store at that path
+    #   - else -> cwd if it has an index, else federated all-stores
+    explicit_paths = [p.strip() for p in (args.stores or "").split(",") if p.strip()]
+    federated = bool(args.all or args.tag or explicit_paths)
+    in_path = args.in_path
+    if not federated and in_path is None:
+        cwd_idx = Path.cwd() / rag_store_mod.INDEX_DIR_NAME
+        if cwd_idx.is_dir():
+            in_path = str(Path.cwd())
+        else:
+            federated = True
+
     try:
-        results = rag_pipeline.retrieve(
-            Path(args.in_path),
-            args.text,
-            top_k=args.top_k,
-            cfg=cfg,
-            code_only=args.code_only,
-            prose_only=args.prose_only,
-        )
+        if federated:
+            results = rag_pipeline.retrieve_federated(
+                args.text,
+                store_paths=explicit_paths or None,
+                tags=args.tag or None,
+                top_k=args.top_k,
+                cfg=cfg,
+                code_only=args.code_only,
+                prose_only=args.prose_only,
+            )
+            scope_label = "all registered stores"
+            if explicit_paths:
+                scope_label = f"{len(explicit_paths)} stores"
+            if args.tag:
+                scope_label = f"tagged {','.join(args.tag)}"
+        else:
+            results = rag_pipeline.retrieve(
+                Path(in_path),
+                args.text,
+                top_k=args.top_k,
+                cfg=cfg,
+                code_only=args.code_only,
+                prose_only=args.prose_only,
+            )
+            scope_label = str(Path(in_path).resolve())
     except RuntimeError as e:
         if args.json:
             print(json.dumps({"ok": False, "error": str(e)}))
@@ -1803,12 +1941,16 @@ def cmd_query(args):
     if not results:
         print("(no results)")
         return 0
-    print(f"Top {len(results)} results from {Path(args.in_path).resolve()}:")
+    print(f"Top {len(results)} results from {scope_label}:")
     for i, r in enumerate(results, 1):
         kinds = ",".join(r.get("kinds", []))
         score = r.get("rrf", 0.0)
         line_range = f"{r.get('line_start')}-{r.get('line_end')}"
-        print(f"\n{i}. [rrf {score:.4f}, {kinds}]  {r.get('rel_path')}:{line_range}")
+        # In federated mode each result has a store_path; in single-store
+        # mode it's implied by scope_label.
+        store = r.get("store_path")
+        location = f"{store}/{r.get('rel_path')}:{line_range}" if store else f"{r.get('rel_path')}:{line_range}"
+        print(f"\n{i}. [rrf {score:.4f}, {kinds}]  {location}")
         snippet = (r.get("text") or "").strip().splitlines()
         for line in snippet[:8]:
             print(f"     {line[:100]}")
