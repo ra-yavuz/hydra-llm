@@ -207,9 +207,11 @@ def start_model(catalog_entry, cfg=None, port=None):
         "--port", "8081",
         "--log-disable",
     ]
-    # Default cap on generated tokens for clients that omit max_tokens.
-    # "off" means "don't pass --predict; let llama-server use its built-in 128".
-    predict = cfg.get("predict")
+    # Resolve per-alias server settings (catalog + config + per-alias
+    # override layers). Driver remains tolerant of unknown keys.
+    from . import server_settings
+    eff = server_settings.resolve(alias, catalog_entry, cfg)
+    predict = eff.get("predict")
     if predict == "uncapped":
         cmd += ["--predict", "-1"]
     elif isinstance(predict, int):
@@ -218,16 +220,21 @@ def start_model(catalog_entry, cfg=None, port=None):
         try:
             cmd += ["--predict", str(int(predict))]
         except ValueError:
-            pass  # Unrecognized value: silently skip rather than fail to start.
-    # How model "thinking" / chain-of-thought is exposed.
-    rf = cfg.get("reasoning_format")
+            pass
+    rf = eff.get("reasoning_format")
     rf_map = {"none": "none", "deepseek": "deepseek", "hide": "auto"}
     if isinstance(rf, str) and rf in rf_map:
         cmd += ["--reasoning-format", rf_map[rf]]
-    # "off" / unrecognized -> don't pass the flag; llama-server picks its default.
-    extra = catalog_entry.get("extra_args", [])
-    if isinstance(extra, list):
-        cmd += extra
+    # chat_template_kwargs: passed as a single JSON arg to llama-server's
+    # --chat-template-kwargs flag. Used to disable thinking mode on
+    # gemma-4 and similar runtime-toggleable reasoning models.
+    ctk = eff.get("chat_template_kwargs")
+    if isinstance(ctk, dict) and ctk:
+        import json as _json
+        cmd += ["--chat-template-kwargs", _json.dumps(ctk)]
+    extra = eff.get("extra_args")
+    if isinstance(extra, list) and extra:
+        cmd += [str(x) for x in extra]
 
     try:
         subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)

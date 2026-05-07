@@ -81,16 +81,19 @@ def status() -> dict:
     return out
 
 
-def enable(model_id: str) -> tuple[bool, str]:
-    """Write the unit and `systemctl --user enable` it. Returns (ok, message)."""
+def enable(model_id: str, start_now: bool = True) -> tuple[bool, str]:
+    """Write the unit, enable it, and (by default) start it now.
+
+    `start_now=True` runs `systemctl --user start` so the user sees the model
+    come up immediately, not just on next login. Returns (ok, message).
+    """
     unit_dir = _unit_dir()
     unit_dir.mkdir(parents=True, exist_ok=True)
     unit_path = _unit_path()
     bin_path = _hydra_bin()
 
-    # The unit just shells out to `hydra-llm start <id>`. RemainAfterExit so
-    # systemd treats it as "active" once start returns 0; the actual server
-    # is a docker container managed independently.
+    # `--no-wait` so the unit doesn't tie its lifetime to /health polling;
+    # we want the unit to flip to active as soon as `docker run` returns.
     contents = f"""[Unit]
 Description=hydra-llm: autostart model {model_id}
 After=default.target
@@ -99,7 +102,7 @@ After=default.target
 Type=oneshot
 RemainAfterExit=yes
 Environment=HYDRA_LLM_AUTOSTART_MODEL={model_id}
-ExecStart={bin_path} start {model_id}
+ExecStart={bin_path} start --no-wait {model_id}
 ExecStop={bin_path} stop {model_id}
 
 [Install]
@@ -113,7 +116,21 @@ WantedBy=default.target
     r = _systemctl_user("enable", UNIT_NAME)
     if r.returncode != 0:
         return False, f"systemctl --user enable failed: {r.stderr.strip()}"
-    return True, f"autostart enabled for {model_id}\n  unit: {unit_path}"
+    msg = f"autostart enabled for {model_id}\n  unit: {unit_path}"
+    if start_now:
+        r = _systemctl_user("restart", UNIT_NAME)
+        if r.returncode != 0:
+            return True, (msg + f"\n  warning: could not start now: {r.stderr.strip()}\n"
+                                f"  it will run on next login.")
+        msg += "\n  started now (model is launching in the background)."
+    # Linger lets the user unit start at boot without a login session, which
+    # is what most people expect from "autostart". Best-effort; needs `loginctl`.
+    try:
+        subprocess.run(["loginctl", "enable-linger"],
+                       capture_output=True, text=True, timeout=5)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return True, msg
 
 
 def disable() -> tuple[bool, str]:

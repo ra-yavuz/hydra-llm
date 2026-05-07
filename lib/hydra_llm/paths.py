@@ -22,6 +22,9 @@ PERSONAS_DIR = CONFIG_DIR / "personas"
 MODELS_DIR_DEFAULT = DATA_DIR / "models"
 USER_CATALOG = CONFIG_DIR / "catalog.yaml"
 USER_CONFIG = CONFIG_DIR / "config.yaml"
+# Per-alias server-launch overrides. One JSON file per alias; each
+# layered on top of the global config + catalog defaults at start time.
+SERVER_OVERRIDES_DIR = CONFIG_DIR / "server"
 
 # Read-only locations searched in order. The first match wins.
 SHIPPED_CATALOG_PATHS = [
@@ -63,5 +66,6 @@ def shipped_presets_dir():
 
 def ensure_user_dirs():
     """Create the user dirs if they don't exist. Safe to call repeatedly."""
-    for d in (CONFIG_DIR, STATE_DIR, CACHE_DIR, DATA_DIR, SESSIONS_DIR, PERSONAS_DIR, MODELS_DIR_DEFAULT):
+    for d in (CONFIG_DIR, STATE_DIR, CACHE_DIR, DATA_DIR, SESSIONS_DIR,
+              PERSONAS_DIR, MODELS_DIR_DEFAULT, SERVER_OVERRIDES_DIR):
         d.mkdir(parents=True, exist_ok=True)

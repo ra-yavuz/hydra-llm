@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -113,7 +114,23 @@ def main():
     p.add_argument("alias")
     p.set_defaults(func=cmd_stop)
 
-    sub.add_parser("stop-all", help="stop every model server we manage").set_defaults(func=cmd_stop_all)
+    p = sub.add_parser(
+        "stop-all",
+        help="stop every model server we manage",
+        description=(
+            "Stop every container with the configured prefix. Freed VRAM is "
+            "released by the GPU driver as soon as the containers exit. "
+            "System RAM the kernel was using to cache the GGUF mmaps is "
+            "reclaimed lazily by the kernel itself; pass --drop-caches to "
+            "force an immediate reclaim via "
+            "`echo 3 | sudo tee /proc/sys/vm/drop_caches`. The sudo step "
+            "is invoked interactively the first time it is needed."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--drop-caches", action="store_true",
+                   help="also drop the kernel page cache (needs sudo)")
+    p.set_defaults(func=cmd_stop_all)
 
     p = sub.add_parser("autostart",
                        help="start a chosen model when you log in (user systemd unit)",
@@ -192,6 +209,40 @@ def main():
     p.set_defaults(func=lambda a: (p.print_help() or sys.exit(1)) if not a.persona_cmd else None)
 
     sub.add_parser("config-path", help="print the config directory").set_defaults(func=cmd_config_path)
+
+    p = sub.add_parser(
+        "config",
+        help="show or change per-model server-launch settings",
+        parents=[json_parent],
+        description=(
+            "Get or set per-alias server-launch overrides such as "
+            "reasoning_format, predict, extra_args, and "
+            "chat_template_kwargs.\n\n"
+            "Layer order (narrowest wins):\n"
+            "  llama-server defaults  <  catalog entry  <  config.yaml  <\n"
+            "  per-alias override (this command).\n\n"
+            "Forms:\n"
+            "  hydra-llm config <alias>                     show resolved settings\n"
+            "  hydra-llm config <alias> <key>               show one effective key\n"
+            "  hydra-llm config <alias> <key> <value>       set the override\n"
+            "  hydra-llm config <alias> reset               drop all overrides\n"
+            "  hydra-llm config <alias> reset <key>         drop one override\n\n"
+            "When the alias is currently running and a launch-time "
+            "setting changes, you'll be prompted to restart it. Pass "
+            "--restart to skip the prompt and just restart, or --no-restart "
+            "to skip the restart even if needed (the new value applies on "
+            "next start)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("alias")
+    p.add_argument("key", nargs="?")
+    p.add_argument("value", nargs="?")
+    p.add_argument("--restart", action="store_true",
+                   help="restart a running container without asking")
+    p.add_argument("--no-restart", action="store_true",
+                   help="don't restart even if the change is launch-time")
+    p.set_defaults(func=cmd_config)
 
     p = sub.add_parser("uninstall", help="remove the install (keeps user data)")
     p.add_argument("--yes", action="store_true", help="skip confirmation prompt")
@@ -279,26 +330,47 @@ def cmd_status(args):
             print(f"error: {err}", file=sys.stderr)
         return 1
     docker_driver.annotate_health(rows)
-    # Index from the same enumerator used by start/stop/chat, so the # printed
-    # here is exactly what you can pass back as `hydra-llm start <#>`.
+    # Show every alias the user can refer to by `#`, so the index printed here
+    # matches exactly what `start <#>` / `stop <#>` will resolve to. Entries
+    # that are downloaded but have no container appear with "-" status.
     ordered = _enumerated_aliases(cfg)
-    index_by_alias = {a: i + 1 for i, a in enumerate(ordered)}
-    rows.sort(key=lambda r: r["alias"])
+    by_alias = {r["alias"]: r for r in rows}
+    display = []
+    for i, alias in enumerate(ordered, 1):
+        r = by_alias.get(alias)
+        if r is not None:
+            display.append({
+                "index": i,
+                "alias": alias,
+                "container": r["container"],
+                "state": r["state"],
+                "port": r["port"],
+                "status": r["status"],
+                "ready": r.get("ready", False),
+            })
+        else:
+            display.append({
+                "index": i,
+                "alias": alias,
+                "container": None,
+                "state": "not started",
+                "port": None,
+                "status": "not started",
+                "ready": False,
+            })
     if args.json:
-        for r in rows:
-            r["index"] = index_by_alias.get(r["alias"])
-        print(json.dumps({"ok": True, "running": rows}, indent=2))
+        print(json.dumps({"ok": True, "rows": display}, indent=2))
         return 0
-    if not rows:
-        print("No model servers running.")
+    if not display:
+        print("No models downloaded and no containers found.")
+        print("Browse: hydra-llm list-online")
         return 0
     print(f"{'#':<3} {'ALIAS':<32} {'PORT':<6} {'READY':<6} STATUS")
-    for r in rows:
-        ready = "yes" if r.get("ready") else "no"
-        idx = index_by_alias.get(r["alias"], "?")
-        print(f"{idx:<3} {r['alias']:<32} {r['port'] or '?':<6} {ready:<6} {r['status']}")
+    for d in display:
+        ready = "yes" if d["ready"] else "no"
+        print(f"{d['index']:<3} {d['alias']:<32} {d['port'] or '-':<6} {ready:<6} {d['status']}")
     print()
-    print("Tip: `hydra-llm start <#>` and `stop <#>` accept these index numbers.")
+    print("Tip: `hydra-llm start <#>` / `stop <#>` / `autostart <#>` accept these index numbers.")
     return 0
 
 
@@ -663,6 +735,10 @@ def cmd_start(args):
             print(f"error: {entry['id']} is not downloaded yet. Run: hydra-llm download {entry['id']}",
                   file=sys.stderr)
             return 1
+        # If user passed a numeric index (or filename) make the resolution visible
+        # before docker runs, so they can ctrl-c if it isn't what they meant.
+        if not args.json and args.alias != entry["id"]:
+            print(f"resolved {args.alias!r} -> {entry['id']}")
     else:
         catalog, _ = cfg_mod.load_catalog()
         downloaded = [m for m in catalog if downloader.is_downloaded(m, cfg)]
@@ -765,10 +841,17 @@ def cmd_autostart(args):
             print(f"  model: {st['model']}")
             print(f"  unit:  {st['unit_path']}")
         return 0
-    entry = _resolve_catalog(args.alias)
-    if not entry:
-        print(f"error: unknown catalog id: {args.alias}", file=sys.stderr)
+    cfg = cfg_mod.load_user_config()
+    alias, err = _resolve_alias_or_index(args.alias, cfg)
+    if err:
+        print(f"error: {err}", file=sys.stderr)
         return 1
+    entry = _resolve_catalog(alias)
+    if not entry:
+        print(f"error: unknown catalog id: {alias}", file=sys.stderr)
+        return 1
+    if not args.json and args.alias != entry["id"]:
+        print(f"resolved {args.alias!r} -> {entry['id']}")
     ok, msg = autostart_mod.enable(entry["id"])
     if args.json:
         print(json.dumps({"ok": ok, "message": msg, "model": entry["id"]}))
@@ -871,6 +954,8 @@ def cmd_stop(args):
     if err:
         print(f"error: {err}", file=sys.stderr)
         return 1
+    if args.alias != alias:
+        print(f"resolved {args.alias!r} -> {alias}")
     print(f"stopping {alias}...")
     ok, name = docker_driver.stop(alias, cfg)
     if not ok:
@@ -887,9 +972,33 @@ def cmd_stop_all(args):
         return 1
     if not names:
         print("nothing was running.")
+    else:
+        for n in names:
+            print(f"stopped {n}")
+
+    drop = bool(getattr(args, "drop_caches", False))
+    if not drop:
         return 0
-    for n in names:
-        print(f"stopped {n}")
+
+    # Force the kernel to drop the page cache. We previously mmap'd
+    # multi-GB GGUF files; even after the containers exit, the page
+    # cache continues to hold them so a re-launch is fast. Drop them
+    # explicitly when the user wants the RAM back. Needs root.
+    print("dropping page cache (sudo)...")
+    try:
+        rc = subprocess.run(
+            ["sudo", "sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"],
+            timeout=30,
+        ).returncode
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"  warn: could not run sudo drop_caches: {e}",
+              file=sys.stderr)
+        return 0
+    if rc == 0:
+        print("  ✓ page cache dropped")
+    else:
+        print(f"  warn: drop_caches exited {rc}; continuing.",
+              file=sys.stderr)
     return 0
 
 
@@ -1008,6 +1117,158 @@ def cmd_persona_path(args):
 
 def cmd_config_path(args):
     print(paths.CONFIG_DIR)
+    return 0
+
+
+def cmd_config(args):
+    """Show or change per-alias server-launch overrides.
+
+    Layered resolution: catalog defaults -> config.yaml -> per-alias
+    override file. This command writes layer 4 only. When a running
+    container would need a different launch command after the change,
+    we offer to restart it."""
+    from . import server_settings as ss
+
+    cfg = cfg_mod.load_user_config()
+    catalog, _ = cfg_mod.load_catalog()
+    entry = next((m for m in catalog if m["id"] == args.alias), None)
+    if entry is None:
+        print(f"unknown alias: {args.alias}", file=sys.stderr)
+        return 2
+
+    # Reset cases (key may be the literal "reset" or a key name).
+    if args.key == "reset":
+        target = args.value  # optional specific key to reset
+        if target and target not in ss.KNOWN_KEYS:
+            print(f"unknown key: {target}; known: {sorted(ss.KNOWN_KEYS)}",
+                  file=sys.stderr)
+            return 2
+        before = ss.resolve(args.alias, entry, cfg)
+        ss.reset(args.alias, target)
+        after = ss.resolve(args.alias, entry, cfg)
+        return _config_post_change(args, before, after, args.alias)
+
+    # Read forms: no key (show all) or just a key (show one).
+    if args.key is None:
+        eff = ss.resolve(args.alias, entry, cfg)
+        prov = eff.pop("_provenance", {})
+        if not eff:
+            print(f"{args.alias}: no settings (using llama-server defaults)")
+            return 0
+        print(f"{args.alias}:")
+        for k in sorted(eff):
+            origin = prov.get(k, "?")
+            print(f"  {k:<22} {eff[k]!r}  [{origin}]")
+        ovr = ss.load_overrides(args.alias)
+        if ovr:
+            print(f"\noverride file: {ss._override_path(args.alias)}")
+        return 0
+    if args.key not in ss.KNOWN_KEYS:
+        print(f"unknown key: {args.key}; known: {sorted(ss.KNOWN_KEYS)}",
+              file=sys.stderr)
+        return 2
+    if args.value is None:
+        eff = ss.resolve(args.alias, entry, cfg)
+        if args.key in eff:
+            origin = eff.get("_provenance", {}).get(args.key, "?")
+            print(f"{args.key} = {eff[args.key]!r}  [{origin}]")
+        else:
+            print(f"{args.key} = (unset; llama-server default applies)")
+        return 0
+
+    # Write form. Coerce simple types: integers stay integers; the
+    # literal strings "true"/"false" become bools; bare JSON wins for
+    # extra_args (a list) and chat_template_kwargs (a dict).
+    raw = args.value
+    coerced = raw
+    if args.key == "extra_args":
+        try:
+            coerced = json.loads(raw)
+        except json.JSONDecodeError:
+            print("extra_args expects a JSON array, e.g. '[\"--ctx-size\",\"32768\"]'",
+                  file=sys.stderr)
+            return 2
+        if not isinstance(coerced, list):
+            print("extra_args must be a JSON array", file=sys.stderr)
+            return 2
+    elif args.key == "chat_template_kwargs":
+        try:
+            coerced = json.loads(raw)
+        except json.JSONDecodeError:
+            print("chat_template_kwargs expects a JSON object, e.g. '{\"enable_thinking\":false}'",
+                  file=sys.stderr)
+            return 2
+        if not isinstance(coerced, dict):
+            print("chat_template_kwargs must be a JSON object", file=sys.stderr)
+            return 2
+    elif args.key == "predict":
+        # Accept "uncapped"/"off" as strings; integer otherwise.
+        if raw not in ("uncapped", "off"):
+            try:
+                coerced = int(raw)
+            except ValueError:
+                print("predict expects 'uncapped', 'off', or a positive integer",
+                      file=sys.stderr)
+                return 2
+    elif args.key == "reasoning_format":
+        if raw not in ("none", "deepseek", "hide", "off"):
+            print("reasoning_format expects one of: none | deepseek | hide | off",
+                  file=sys.stderr)
+            return 2
+
+    before = ss.resolve(args.alias, entry, cfg)
+    ss.set_override(args.alias, args.key, coerced)
+    after = ss.resolve(args.alias, entry, cfg)
+    return _config_post_change(args, before, after, args.alias)
+
+
+def _config_post_change(args, before: dict, after: dict, alias: str) -> int:
+    """Common tail for cmd_config: report what changed and, if the
+    alias is currently running and a launch-time setting changed,
+    offer to restart it."""
+    from . import server_settings as ss
+
+    changed = ss.diff_launch_relevant(before, after)
+    if not changed:
+        print(f"  ✓ no effective change for {alias}")
+        return 0
+
+    print(f"  ✓ {alias}: changed {', '.join(changed)}")
+    cfg = cfg_mod.load_user_config()
+    rows, _ = docker_driver.list_running(cfg)
+    container = next((r for r in rows if r["alias"] == alias and r.get("state") == "running"), None)
+    if container is None:
+        print("    (alias is not running; new value applies on next start)")
+        return 0
+
+    if args.no_restart:
+        print("    (alias is running; --no-restart given, value applies on next start)")
+        return 0
+
+    do_restart = args.restart
+    if not do_restart:
+        try:
+            ans = input("    alias is running. restart it now? [y/N] ").strip().lower()
+        except EOFError:
+            ans = ""
+        do_restart = ans in ("y", "yes")
+    if not do_restart:
+        print("    skipped restart; value applies on next start")
+        return 0
+
+    catalog, _ = cfg_mod.load_catalog()
+    entry = next((m for m in catalog if m["id"] == alias), None)
+    if entry is None:
+        print(f"    can't restart: alias {alias!r} not in catalog anymore",
+              file=sys.stderr)
+        return 1
+    print(f"    restarting {alias}...")
+    docker_driver.stop(alias, cfg)
+    ok, info = docker_driver.start_model(entry, cfg=cfg)
+    if not ok:
+        print(f"    restart failed: {info.get('error')}", file=sys.stderr)
+        return 1
+    print(f"    ✓ restarted on port {info.get('port')}")
     return 0
 
 

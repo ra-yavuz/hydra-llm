@@ -1,3 +1,58 @@
+hydra-llm (0.1.12-1) unstable; urgency=low
+
+  * New `hydra-llm config <alias>` subcommand: read or write per-alias
+    overrides for server-launch settings. Writes go to a JSON file
+    under ~/.config/hydra-llm/server/<alias>.json so they survive
+    catalog updates and don't pollute the main config.yaml.
+  * Layered resolution at start time: llama-server defaults -> catalog
+    entry -> global config.yaml -> per-alias override (narrowest
+    wins). Provenance is shown in `hydra-llm config <alias>` output
+    so it's obvious which layer set each value.
+  * Settings supported in this release:
+      reasoning_format       none | deepseek | hide | off
+      predict                uncapped | off | <int>
+      extra_args             list of additional llama-server flags
+      chat_template_kwargs   JSON dict (enables disabling thinking
+                             mode on gemma-4 et al via
+                             {"enable_thinking": false})
+  * Live apply: when an alias is currently running, `hydra-llm config`
+    detects whether the change requires a server restart and prompts
+    before doing it. Pass --restart to skip the prompt, --no-restart
+    to apply on next start instead.
+  * docker_driver now consumes the resolved settings dict instead of
+    reading individual keys directly from the global config; same
+    behaviour for users who never set a per-alias override.
+  * `hydra-llm stop-all` gains a `--drop-caches` flag that runs
+    `sync; echo 3 > /proc/sys/vm/drop_caches` under sudo after the
+    containers exit, so the kernel releases the page cache that was
+    holding the multi-GB GGUF mmaps. VRAM is freed automatically by
+    the GPU driver as soon as the containers stop; this only matters
+    for system RAM showing as cached.
+
+  Also folded in (originally queued for 0.1.11):
+  * `hydra-llm autostart` now accepts the same shortcuts as `start` and
+    `stop`: catalog id, GGUF filename, filename without `.gguf`, or the
+    numeric `#` from `status`. Previously only the catalog id worked, so
+    `autostart 3` errored with `unknown catalog id: 3`.
+  * `hydra-llm autostart <id>` now also starts the model immediately
+    (in addition to enabling the unit for next login), so the user sees
+    the model come up right away. The unit uses `start --no-wait` so
+    systemd doesn't tie its lifetime to the model's load time.
+  * `loginctl enable-linger` is invoked best-effort on enable, so the
+    user unit can come up at boot without an interactive login session.
+    No-op on systems without loginctl or where linger is already on.
+  * `hydra-llm status` now lists every alias the index numbers refer to,
+    not just rows that currently have a container. Previously the `#`
+    column showed the alias's position in a hidden union of running
+    containers + downloaded catalog entries, so `status` could show
+    only `3` while `start 1` resolved to a different model entirely.
+    Entries without a container appear with `-` port and `not started`.
+  * `start`, `stop`, and `autostart` now echo the resolved alias when
+    you pass an index or filename (e.g. `resolved '1' -> dolphin-r1...`),
+    so you can ctrl-c if it isn't what you meant.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Thu, 07 May 2026 12:00:00 +0000
+
 hydra-llm (0.1.10-1) unstable; urgency=low
 
   * `hydra-llm start` now polls the new container's /health endpoint
