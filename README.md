@@ -61,71 +61,186 @@ hydra-llm targets Linux first (Debian, Ubuntu, Fedora, Arch, etc.) but the archi
 - **Optional KDE Plasma 6 panel widget.** Per-row Start/Stop, Console launcher, inline log pane, prompt/params editor, and a HAL-eye tray indicator that breathes with system load.
 - **Personas, prompts, persistent sessions.** Reusable persona files, per-alias system prompts and sampling params (narrowest layer wins), and chat sessions saved as JSON you can resume.
 
-## Quick start
+## Quickstart
+
+End to end. Zero to chatting with retrieval over your own folder. Every command below is real, in the order you run them. Deep-dive sections later in the README explain each piece.
 
 ### 1. Install (Debian / Ubuntu)
 
-One line. Sets up the signed apt repo if not already added, refreshes the package index, and installs hydra-llm. Idempotent, safe to re-run:
+One line. Sets up the signed apt repo, refreshes the package index, installs the CLI. Idempotent:
 
 ```sh
 sudo bash -c 'set -e; install -m 0755 -d /etc/apt/keyrings && curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg -o /etc/apt/keyrings/ra-yavuz.gpg && echo "deb [signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" > /etc/apt/sources.list.d/ra-yavuz.list && apt update && apt install -y hydra-llm'
 ```
 
-On KDE, also install the panel widget:
+On KDE, optional panel widget:
 
 ```sh
-sudo apt update && sudo apt install hydra-llm-plasma
+sudo apt install hydra-llm-plasma
 ```
 
-If you already have the `ra-yavuz` apt repo, the `apt update` step above is still required: without it apt will not see new packages or new versions.
+Already have the `ra-yavuz` apt repo? Then it is just `sudo apt update && sudo apt install hydra-llm`. Without `apt update`, apt will not see new versions.
 
-<details><summary>Step by step (manual repo setup)</summary>
+<details><summary>Step by step (manual repo setup) and other distros</summary>
 
 ```sh
-# 1. Trust the signing key
+# Manual deb install (any apt-based distro):
 sudo install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg \
   | sudo tee /etc/apt/keyrings/ra-yavuz.gpg >/dev/null
-
-# 2. Add the apt source
 echo "deb [signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/ra-yavuz.list
-
-# 3. Refresh the package index, then install
 sudo apt update
-sudo apt install hydra-llm                  # add `hydra-llm-plasma` if on KDE
+sudo apt install hydra-llm
+
+# One-liner installer (any distro with bash + Docker; lands in ~/.local/bin):
+curl -fsSL https://raw.githubusercontent.com/ra-yavuz/hydra-llm/main/get.sh | bash
 ```
 
 </details>
 
-hydra-llm runs every model in a Docker container. If `docker ps` errors with permission denied:
+If `docker ps` errors with permission denied:
 
 ```sh
 sudo apt install docker.io
-sudo usermod -aG docker "$USER"   # log out / back in for the group to take effect
+sudo usermod -aG docker "$USER"   # log out and back in
 ```
 
-### 2. First-run setup
+### 2. First-run engine setup
+
+Build the llama.cpp Docker image and pull a starter model so you can confirm the install works:
 
 ```sh
-hydra-llm doctor          # detect your hardware tier
-hydra-llm setup           # build engine image (5-10 min) + tiny starter model + smoke test
+hydra-llm doctor          # confirm hardware detection (tier, RAM, GPU)
+hydra-llm setup           # build engine image (5-10 min) + starter model + smoke test
 ```
 
-### 3. Pick and run a model
+`hydra-llm setup` is the only step that takes real time. It builds the Vulkan and CPU engine images locally (the deb does not ship binaries; this is what the Docker dependency is for). On a typical laptop this is a one-time 5-10 minute investment.
+
+### 3. Pick and download a real chat model
 
 ```sh
-hydra-llm list-online            # filtered to what your hardware can run
-hydra-llm download gemma-2-2b
-hydra-llm chat gemma-2-2b        # auto-starts the container, drops you into a REPL
+hydra-llm list-online                 # browse the catalog, filtered to what fits
+hydra-llm download gemma-2-2b         # or any id from the list-online output
 ```
 
-Or with a personality:
+Pick something your hardware actually fits. `hydra-llm doctor` already told you the tier. Models tagged for your tier work; everything else either is too big or too small.
+
+Want to register your own GGUFs from somewhere else (Ollama, LM Studio, manual download)? One command:
 
 ```sh
-# Drop a markdown file in ~/.config/hydra-llm/personas/
-hydra-llm chat gemma-2-2b --persona friendly-tutor
+hydra-llm addlocal /path/to/your/gguf/folder/ --link --tier laptop
 ```
+
+That recursively registers every `.gguf` under the folder.
+
+### 4. Chat with the model
+
+The simplest case: just type `hydra-llm chat`. With v0.2.3+, no alias is needed:
+
+```sh
+hydra-llm chat
+# - exactly one model is running -> attaches to it
+# - several running              -> lists with port numbers, prompt for a number
+# - none running but one is downloaded -> auto-starts that one
+# - none running, several installed    -> lists, prompt for a number
+# - nothing installed             -> tells you to download one
+```
+
+You can always be explicit:
+
+```sh
+hydra-llm chat gemma-2-2b
+hydra-llm chat 4                       # numeric index from `hydra-llm list`
+```
+
+Inside the REPL, slash commands matter: `/help` lists everything, `/quit` exits, `/reset` clears history, `/params` shows sampling params, `/set temperature 0.5` adjusts one mid-session.
+
+Sessions persist by default. Each `(folder, model)` pair gets its own session at `~/.local/state/hydra-llm/sessions/<hash>-<alias>.json`, so chats in different folders never share history. Override with `--session foo` for a named cross-folder session, or `./chat.json` (positional) to pin a session file to your project.
+
+### 5. Set up RAG (one-time)
+
+Now the fun part: index a folder so the model can answer questions about *your* code or notes.
+
+```sh
+hydra-llm rag setup
+```
+
+This shows a numbered menu like:
+
+```
+Recommended embedder for your tier: qwen3-embed-4b  (2.5 GB)  (NOT installed)
+
+Options:
+  1. Download recommended (qwen3-embed-4b, 2.5 GB)
+  2. Use already-installed nomic-embed-text (prose)
+  3. Pick a different embedder from the catalog
+  4. Cancel; do nothing
+```
+
+Pick `1` for the recommendation, or `2` if you already have a smaller embedder you'd rather use (especially if your folder is mostly prose: a novel, notes, docs). The "What is an embedder" section below explains the choice in more detail.
+
+### 6. Index a folder
+
+```sh
+cd ~/path/to/whatever/folder/you/want/searched
+hydra-llm index .
+```
+
+That walks the folder, classifies each file as code or prose, chunks it, embeds every chunk, and stores everything in `<folder>/.hydra-index/` (a LanceDB database, ~20-200 MB depending on folder size). Re-running `hydra-llm index .` is idempotent: it diffs `(mtime, size)` against the previous index and only re-embeds changed files, so it is fast on subsequent runs (~1 second for a no-op refresh).
+
+Useful flags: `--exclude '*.test.js'`, `--include 'fixtures/important.json'`, `--depth 2`, `--max-file-size-mb 0.5`, `--full` (force from-scratch rebuild), `--dry-run` (print plan, do not embed), `--tag work` (label this store for federated `--tag work` queries from elsewhere later).
+
+### 7. Sanity-check retrieval (no model needed)
+
+Before wiring up a chat, make sure retrieval finds what you expect:
+
+```sh
+hydra-llm query "where do we handle auth tokens"
+```
+
+You get the top-K chunks with file path and line range. No chat model is involved, so this is a fast and cheap test. If the results look off, your index is the problem (try a different embedder, or `index . --full`); if they look right, you are good to chat.
+
+### 8. Chat with retrieval
+
+```sh
+hydra-llm chat --rag .                          # use the index in cwd
+hydra-llm chat gemma-2-2b --rag . --rag-show-chunks   # also echo retrieved locations each turn
+```
+
+Per turn, hydra embeds your message, fetches the top-K chunks from the index, and prepends them to the prompt as a `<context>...</context>` block before sending to the model. The `--rag-show-chunks` flag prints the chunk file paths so you can see what the model is being given.
+
+Slash commands inside the REPL: `/rag on|off` toggles retrieval, `/rag-show on|off` toggles the `[rag: N chunks]` summary line, `/rag-chunks on|off` toggles the chunk preview, `/rag <text>` runs a one-off retrieval without a model call.
+
+### 9. Bundle a model + persona + corpus into one alias (optional, headline feature)
+
+If you find yourself doing the same `chat <model> --rag <path>` repeatedly for the same project:
+
+```sh
+hydra-llm create gemma-2-2b ~/personas/code-helper.md cool-app-bot \
+    --rag-index ~/projects/cool-app
+```
+
+That bakes the model, the persona, and the corpus path into one declarative catalog entry called `cool-app-bot`. From now on:
+
+```sh
+hydra-llm chat cool-app-bot
+```
+
+No flags. Retrieval just works. Move the `~/.config/hydra-llm/catalog.yaml` file across machines and the bundle moves with it.
+
+### 10. Federate: query across every indexed folder
+
+If you have indexed several folders, you can search them all at once from anywhere:
+
+```sh
+hydra-llm rag stores                           # list every folder you have indexed
+hydra-llm query "..." --all                    # federated search across all of them
+hydra-llm query "..." --tag work               # only stores tagged with 'work'
+hydra-llm chat <model> --rag-all               # chat with retrieval across all stores
+```
+
+That is the whole arc, end to end. Everything below is depth on each piece.
 
 ## Personalities, prompts, and params
 
