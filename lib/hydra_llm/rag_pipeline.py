@@ -34,6 +34,10 @@ class IndexPlan:
     files_deleted: list[str] = field(default_factory=list)
     full_rebuild: bool = False
     walk_summary: rag_index.WalkSummary | None = None
+    # True when code and prose use *different* embedders. False (default) means
+    # one embedder serves all chunks; the chunks are still tagged by their
+    # classifier-determined kind for filtering, but live in one table.
+    dual_index: bool = False
 
 
 @dataclass
@@ -97,10 +101,17 @@ def plan_index(root: Path,
                max_file_size_bytes: int = 1 * 1024 * 1024,
                code_embedder: dict | None = None,
                prose_embedder: dict | None = None,
-               single_index: bool = False,
+               dual_index: bool = False,
                only_kind: str | None = None) -> IndexPlan:
     """Compute the plan: which files to (re)embed, which are unchanged,
     which were deleted, and which embedders to use.
+
+    Default mode is single-embedder: every chunk goes through the same
+    embedder. Pass dual_index=True to use a code embedder and a prose
+    embedder separately and fuse query results via Reciprocal Rank
+    Fusion. Dual is the 2026 best practice for very large mixed
+    code+prose corpora; for personal-scale folders the quality
+    difference is small and not worth the extra disk + RAM.
     """
     if cfg is None:
         cfg = cfg_mod.load_user_config()
@@ -109,9 +120,11 @@ def plan_index(root: Path,
     auto_code, auto_prose = _detect_default_embedders(cfg)
     code_e = code_embedder or auto_code
     prose_e = prose_embedder or auto_prose
-    if single_index:
-        # Use one embedder for everything. Prefer the explicit one passed in,
-        # else code (which usually handles prose adequately too).
+    if not dual_index:
+        # Single-embedder mode: everything goes through the same embedder.
+        # Prefer an explicitly-passed one, else the tier's code embedder
+        # (handles prose acceptably and is the strongest pick at every
+        # tier where one exists).
         chosen = code_embedder or prose_embedder or code_e or prose_e
         code_e = chosen
         prose_e = chosen
@@ -141,6 +154,7 @@ def plan_index(root: Path,
         prose_embedder=prose_e,
         full_rebuild=full_rebuild or not rag_store.has_index(root),
         walk_summary=summary,
+        dual_index=dual_index,
     )
 
     if plan.full_rebuild:
@@ -307,6 +321,7 @@ def execute_plan(plan: IndexPlan,
         "created": rag_store.now_iso(),
         "last_updated": rag_store.now_iso(),
         "root": str(plan.root),
+        "dual_index": bool(plan.dual_index),
         "code_embedder": (
             {"id": plan.code_embedder["id"], "dimensions": plan.code_embedder["dimensions"]}
             if plan.code_embedder else None

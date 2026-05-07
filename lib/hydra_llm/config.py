@@ -22,6 +22,14 @@ DEFAULT_CONFIG = {
     # embedders running until explicitly stopped. Default 60s gives a query
     # followed by another query enough time to reuse the warm container.
     "embedder_idle_ttl_seconds": 60,
+    # RAG defaults. dual_index off means a single embedder serves all
+    # chunks; flip to true (or pass --dual-index on `index`) to use a
+    # separate code embedder and prose embedder fused via RRF at query
+    # time. Single is faster, simpler, and adequate for personal-scale
+    # corpora; dual pays off on large mixed code+prose archives.
+    "rag": {
+        "dual_index": False,
+    },
     "compose_project": "hydra-llm",
     "container_prefix": "hydra-",
     # Auto-pick CPU vs Vulkan image. Override with explicit "image: vulkan|cpu".

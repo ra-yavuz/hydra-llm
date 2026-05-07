@@ -426,8 +426,14 @@ def main():
     p.add_argument("--embedder", help="explicit embedder id (overrides auto code/prose split)")
     p.add_argument("--code-embedder", help="embedder to use for code files")
     p.add_argument("--prose-embedder", help="embedder to use for prose files")
+    p.add_argument("--dual-index", action="store_true",
+                   help="opt into dual-index mode: separate code and prose embedders, "
+                        "results fused via Reciprocal Rank Fusion at query time. "
+                        "Slower and uses more disk; pays off on large mixed corpora.")
+    # --single-index is kept as a no-op alias for backwards compatibility:
+    # single is now the default.
     p.add_argument("--single-index", action="store_true",
-                   help="embed everything with one embedder (no code/prose split)")
+                   help=argparse.SUPPRESS)
     p.add_argument("--no-code", action="store_true", help="skip code files")
     p.add_argument("--no-prose", action="store_true", help="skip prose files")
     p.add_argument("--exclude", action="append", default=[],
@@ -2303,15 +2309,23 @@ def cmd_index(args):
             print(f"error: {msg}", file=sys.stderr)
         return 1
 
+    # Dual-index resolution. Single is the default; --dual-index opts into
+    # the code+prose split. Specifying both --code-embedder and
+    # --prose-embedder is an implicit dual signal. Explicit --single-index
+    # is kept as a backwards-compat no-op (already the default).
+    rag_cfg_section = (cfg.get("rag") or {}) if isinstance(cfg.get("rag"), dict) else {}
+    cfg_dual = bool(rag_cfg_section.get("dual_index", False))
+    dual_index = bool(args.dual_index) or cfg_dual
+
     code_e = None
     prose_e = None
     if args.embedder:
-        # --embedder selects one for everything (single-index mode).
+        # --embedder selects one for everything (forces single).
         e = rag_cat_mod.find_embedder(args.embedder)
         if not e:
             print(f"error: unknown embedder id: {args.embedder}", file=sys.stderr)
             return 1
-        args.single_index = True
+        dual_index = False
         code_e = e
         prose_e = e
     if args.code_embedder:
@@ -2324,6 +2338,11 @@ def cmd_index(args):
         if not prose_e:
             print(f"error: unknown embedder id: {args.prose_embedder}", file=sys.stderr)
             return 1
+    # Specifying both code- and prose-embedders explicitly is an implicit
+    # opt-in to dual-index mode; the user clearly wants different
+    # embedders per kind.
+    if args.code_embedder and args.prose_embedder and code_e["id"] != prose_e["id"]:
+        dual_index = True
 
     only_kind = None
     if args.no_code and args.no_prose:
@@ -2345,7 +2364,7 @@ def cmd_index(args):
         max_file_size_bytes=int(args.max_file_size_mb * 1024 * 1024),
         code_embedder=code_e,
         prose_embedder=prose_e,
-        single_index=args.single_index,
+        dual_index=dual_index,
         only_kind=only_kind,
     )
 
@@ -2378,7 +2397,7 @@ def cmd_index(args):
                 max_depth=args.depth,
                 max_file_size_bytes=int(args.max_file_size_mb * 1024 * 1024),
                 code_embedder=code_e, prose_embedder=prose_e,
-                single_index=args.single_index, only_kind=only_kind,
+                dual_index=dual_index, only_kind=only_kind,
             )
         if not plan.code_embedder and not plan.prose_embedder:
             msg = (
@@ -2407,8 +2426,13 @@ def cmd_index(args):
             print(json.dumps(out, indent=2))
         else:
             print(f"plan for {plan.root}:")
-            print(f"  code embedder:  {plan.code_embedder['id'] if plan.code_embedder else '(none)'}")
-            print(f"  prose embedder: {plan.prose_embedder['id'] if plan.prose_embedder else '(none)'}")
+            print(f"  mode:           {'dual-index' if plan.dual_index else 'single-embedder'}")
+            if plan.dual_index:
+                print(f"  code embedder:  {plan.code_embedder['id'] if plan.code_embedder else '(none)'}")
+                print(f"  prose embedder: {plan.prose_embedder['id'] if plan.prose_embedder else '(none)'}")
+            else:
+                only = plan.code_embedder or plan.prose_embedder
+                print(f"  embedder:       {only['id'] if only else '(none)'}")
             print(f"  full rebuild:   {plan.full_rebuild}")
             print(f"  to embed:       {len(plan.files_to_embed)}")
             print(f"  unchanged:      {len(plan.files_unchanged)}")
@@ -2453,6 +2477,7 @@ def cmd_index(args):
         }, indent=2))
     else:
         print(f"\nindex updated:")
+        print(f"  mode:           {'dual-index' if plan.dual_index else 'single-embedder'}")
         print(f"  chunks added:   {result.chunks_added}")
         if result.chunks_removed:
             print(f"  chunks removed: {result.chunks_removed}")
