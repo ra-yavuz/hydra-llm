@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>hydra-llm - Run local LLMs the easy way</title>
-<meta name="description" content="hydra-llm by Ramazan Yavuz: run local LLMs from a single CLI or a KDE Plasma panel widget. Curated GGUF catalog, anonymous Hugging Face downloads, OpenAI-compatible endpoints on stable ports, hardware-aware filtering, no telemetry. Pairs with lillycoder for in-terminal coding agents.">
+<title>hydra-llm — Run local LLMs and RAG over your stuff. Declarative. Transparent. No cloud.</title>
+<meta name="description" content="hydra-llm: Docker-native local LLM manager with built-in RAG. Curated GGUF catalog with anonymous downloads, OpenAI-compatible endpoints, hardware-aware filtering, KDE Plasma panel widget, model+persona+corpus bundles you can chat with by name. Like Ollama, but with retrieval baked in and simpler when you don't want to write modelfiles.">
 <meta name="author" content="Ramazan Yavuz">
-<meta name="keywords" content="hydra-llm, local llm, self-hosted ai, llama.cpp, gguf, ollama alternative, kde plasma widget, plasmoid, openai compatible api, lillycoder, anonymous huggingface, strix point, strix halo, apple silicon, ramazan yavuz">
+<meta name="keywords" content="hydra-llm, local llm, self-hosted ai, llama.cpp, gguf, ollama alternative, rag, retrieval augmented generation, local rag, embeddings, vector database, lancedb, code search, semantic search, kde plasma widget, plasmoid, openai compatible api, lillycoder, anonymous huggingface, strix point, strix halo, apple silicon, ramazan yavuz">
 <meta name="robots" content="index,follow">
 <link rel="canonical" href="https://ra-yavuz.github.io/hydra-llm/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="hydra-llm - Run local LLMs the easy way">
-<meta property="og:description" content="One CLI plus a KDE panel widget to download, start, chat with, and monitor local LLMs. OpenAI-compatible endpoints on stable ports. No cloud, no API key, no telemetry.">
+<meta property="og:title" content="hydra-llm — Local LLMs and RAG, declarative and transparent">
+<meta property="og:description" content="One CLI plus a KDE panel widget to download, start, chat with, and monitor local LLMs — with retrieval-augmented generation built in. Index any folder; chat with retrieval; bundle a model + persona + corpus into one alias. No cloud, no API key, no telemetry.">
 <meta property="og:url" content="https://ra-yavuz.github.io/hydra-llm/">
 <meta property="og:site_name" content="ra-yavuz">
 <meta name="twitter:card" content="summary">
@@ -25,18 +25,20 @@
     --fg: #1a1a1a; --muted: #5e5e5e; --bg: #f4f1ec; --card: #ffffff;
     --line: #d8d4cc; --code-bg: #ebe7e0; --link: #0a4ca8;
     --apt-bg: #eef2f8; --warn-bg: #fff7d6; --warn-fg: #5a4500; --warn-line: #e8d36b;
+    --accent: #9c2a2a;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --fg: #ececec; --muted: #9a9a9a; --bg: #1c1d20; --card: #25272b;
       --line: #353941; --code-bg: #14151a; --link: #7cb0ff;
       --apt-bg: #1f242d; --warn-bg: #3a2e00; --warn-fg: #f6e2a4; --warn-line: #6a5500;
+      --accent: #f08585;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
          color: var(--fg); background: var(--bg); line-height: 1.55; }
-  main { max-width: 780px; margin: 0 auto; padding: 48px 24px 96px; }
+  main { max-width: 820px; margin: 0 auto; padding: 48px 24px 96px; }
   .crumb { font-size: 0.86rem; color: var(--muted); margin: 0 0 18px; }
   .crumb a { color: var(--muted); }
   .brand {
@@ -48,21 +50,30 @@
   @media (prefers-color-scheme: dark) { .brand { filter: invert(1); } }
   @media (max-width: 720px) { .brand { width: 76px; height: 76px; top: 12px; right: 12px; } }
   @media (max-width: 480px) { .brand { display: none; } }
-  h1 { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.005em; }
-  p.tag { color: var(--muted); margin: 0 0 18px; font-size: 1rem; max-width: 60ch; }
-  h2 { font-size: 1.15rem; margin: 36px 0 8px; }
-  h3 { font-size: 1rem; margin: 24px 0 6px; }
+  h1 { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.95rem; margin: 0 0 6px; letter-spacing: -0.005em; }
+  p.tag { color: var(--fg); margin: 0 0 8px; font-size: 1.18rem; max-width: 60ch; font-weight: 500; }
+  p.subtag { color: var(--muted); margin: 0 0 22px; font-size: 1rem; max-width: 64ch; }
+  h2 { font-size: 1.25rem; margin: 40px 0 8px; }
+  h3 { font-size: 1.02rem; margin: 24px 0 6px; }
   a { color: var(--link); }
   pre { background: var(--code-bg); padding: 14px; border-radius: 8px; overflow-x: auto; font-size: 0.92rem; }
   code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
   pre code { padding: 0; background: transparent; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
   .apt { background: var(--apt-bg); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 18px 0; }
-  .warn { background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-line); border-radius: 10px; padding: 16px; margin: 18px 0; font-size: 0.95rem; }
-  table { width: 100%; border-collapse: collapse; margin: 14px 0; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 0.95rem; }
-  th { background: var(--code-bg); }
-  ul.tight li { margin: 2px 0; }
+  .warn { background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-line); border-radius: 10px; padding: 16px 18px; margin: 18px 0; font-size: 0.94rem; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--code-bg); color: var(--fg); font-size: 0.78rem; margin-right: 4px; vertical-align: middle; border: 1px solid var(--line); }
+  .pill.new { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.95rem; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  ul.tight, ol.tight { margin: 6px 0 14px 0; padding-left: 22px; }
+  ul.tight li, ol.tight li { margin: 4px 0; }
+  .feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0; }
+  @media (max-width: 720px) { .feature-grid { grid-template-columns: 1fr; } }
+  .feature-grid .card { margin: 0; }
+  hr.soft { border: 0; border-top: 1px solid var(--line); margin: 36px 0; }
+  details { margin: 8px 0; }
+  details summary { cursor: pointer; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -71,24 +82,31 @@
 <p class="crumb"><a href="https://ra-yavuz.github.io/">ra-yavuz</a> / hydra-llm</p>
 
 <picture><source srcset="logo.webp" type="image/webp"><img class="brand" src="logo.png" alt="hydra-llm logo: a three-headed hydra between angle brackets"></picture>
-<h1>hydra-llm</h1>
-<p class="tag">Run local LLMs the easy way. One CLI <em>plus</em> a KDE Plasma panel widget to download, start, chat with, and monitor models in Docker. Stable OpenAI-compatible endpoints on local ports, so any tool that speaks <code>/v1/chat/completions</code> just works. No cloud, no API key, no telemetry.</p>
+
+<h1>hydra-llm <span class="pill new">v0.2 — RAG</span></h1>
+<p class="tag">Docker for language models. Plus retrieval, baked in.</p>
+<p class="subtag">One CLI to download, run, chat with, and search local LLMs. Curated GGUF catalog. OpenAI-compatible endpoints on stable local ports. Built-in RAG over any folder you point it at — code, docs, projects, the lot. Bundle a model, a persona, and a corpus into a single alias and chat with it by name. No cloud, no API key, no telemetry.</p>
 
 <div class="warn">
-  <strong>No warranty.</strong> hydra-llm runs LLMs on your machine, manages Docker containers, downloads multi-gigabyte model files from third-party hosts, and exposes HTTP APIs on local ports. It is provided <strong>as is, without warranty of any kind.</strong> The author is not liable for any damage to hardware, data, or system, or for the content of model output. LLM outputs are unreliable and must not be used for safety-critical decisions. By installing or running this software you accept these terms. Read the full disclaimer in the
-  <a href="https://github.com/ra-yavuz/hydra-llm/blob/main/README.md">README</a>.
+  <strong>No warranty. Read this before installing.</strong> hydra-llm runs LLMs on your machine, manages Docker containers on your behalf, downloads multi-gigabyte model files from third-party hosts, exposes HTTP APIs on local ports, and — when you use the RAG features — reads files inside any folder you index and stores embeddings of them on disk. It is provided <strong>as is, without warranty of any kind</strong>, express or implied, including merchantability, fitness for a particular purpose, and noninfringement. The author is <strong>not liable</strong> for any damage to hardware, data, or system, or for the content of model output. LLM outputs are unreliable and must not be used for safety-critical decisions. Sustained high CPU/GPU utilisation can cause thermal throttling or hardware stress; monitor your machine. By installing or running this software you accept these terms. See the <a href="#disclaimer">full disclaimer</a> below and the <a href="https://github.com/ra-yavuz/hydra-llm/blob/main/LICENSE">LICENSE</a>.
 </div>
+
+<h2>Why use this instead of plain Ollama or llama.cpp?</h2>
+
+<p>Three answers, in increasing order of "you didn't know you wanted that":</p>
+
+<ol class="tight">
+  <li><strong>Transparent Docker over llama.cpp.</strong> Each model runs in its own container with a stable name and a reserved port. <code>docker ps</code> shows you exactly what's running. No wrapper daemon you can't see into. <code>hydra-llm</code> is a thin layer over real, inspectable infrastructure.</li>
+  <li><strong>Hardware-aware curated catalog with anonymous downloads.</strong> <code>hydra-llm list-online</code> filters community GGUFs to what your machine can actually run, scored against the tier from <code>hydra-llm doctor</code>. No Hugging Face account or token required. <code>HF_TOKEN</code> is honored but never demanded.</li>
+  <li><strong>RAG built in.</strong> Index any folder with one command. Query it with another. Or add <code>--rag &lt;path&gt;</code> to <code>hydra-llm chat</code> and your model retrieves relevant chunks at every turn. Bundle a model + a persona + a corpus into one declarative alias and just say <code>hydra-llm chat my-bot</code>. Nobody else does that.</li>
+</ol>
+
+<p>If you've used Ollama, this will feel familiar. The difference: hydra-llm doesn't ask you to write modelfiles, runs in plain Docker (no opaque background daemon), exposes the same OpenAI endpoint shape, and ships a real KDE panel widget. And it has retrieval. Ollama doesn't.</p>
 
 <h2>Install</h2>
 
 <div class="apt">
-<strong>One-liner.</strong> Installs the CLI into <code>~/.local/bin</code>, builds the engine image, downloads a starter model, runs a smoke test.
-<pre><code>curl -fsSL https://raw.githubusercontent.com/ra-yavuz/hydra-llm/main/get.sh | bash</code></pre>
-Do not run with <code>sudo</code>. The installer asks for sudo only for missing system packages (Docker, python3-yaml).
-</div>
-
-<div class="card">
-<strong>Or via apt</strong> (Debian/Ubuntu). One-time bootstrap, then a normal <code>apt install</code>:
+<strong>apt (Debian/Ubuntu, recommended).</strong> One-time bootstrap, then a normal <code>apt install</code>:
 <pre><code>sudo install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg \
   | sudo tee /etc/apt/keyrings/ra-yavuz.gpg &gt;/dev/null
@@ -99,110 +117,304 @@ sudo apt install hydra-llm hydra-llm-plasma   # plasma widget is optional</code>
 <p style="margin: 10px 0 0 0; opacity: 0.85;">hydra-llm runs every model in a Docker container. If you do not have Docker yet: <code>sudo apt install docker.io &amp;&amp; sudo usermod -aG docker "$USER"</code>, then log out and back in.</p>
 </div>
 
-<h2>Quick start</h2>
+<div class="card">
+<strong>One-liner (any distro with bash + Docker).</strong> Installs the CLI into <code>~/.local/bin</code>, builds the engine image, downloads a starter model, runs a smoke test.
+<pre><code>curl -fsSL https://raw.githubusercontent.com/ra-yavuz/hydra-llm/main/get.sh | bash</code></pre>
+Do not run with <code>sudo</code>. The installer asks for sudo only for missing system packages.
+</div>
 
-<pre><code>hydra-llm doctor          # detect your hardware
-hydra-llm setup           # build engine image + starter model
-hydra-llm list-online     # browse the catalog (filtered to your hardware)
+<h2>Quick start (chat side)</h2>
+
+<pre><code>hydra-llm doctor                        # detect your hardware
+hydra-llm setup                         # build engine image + starter model
+hydra-llm list-online                   # browse the catalog (filtered to your hardware)
 hydra-llm download llama-3.1-8b
-hydra-llm chat llama-3.1-8b</code></pre>
+hydra-llm chat llama-3.1-8b             # interactive REPL, persistent sessions</code></pre>
+
+<h2 id="rag">Quick start (RAG side) <span class="pill new">new in 0.2</span></h2>
+
+<pre><code>hydra-llm rag setup                     # pick + download the recommended embedders
+hydra-llm index ~/projects/cool-app     # walk + chunk + embed; stores at .hydra-index/
+hydra-llm query "where do we handle auth tokens?" --in ~/projects/cool-app
+
+# Or chat with retrieval:
+hydra-llm chat llama-3.1-8b --rag ~/projects/cool-app
+
+# Or bundle a model, a persona, and a corpus into one alias:
+hydra-llm create llama-3.1-8b ~/personas/code-helper.md cool-app-bot \
+    --rag-index ~/projects/cool-app
+hydra-llm chat cool-app-bot             # no flags. retrieval just works.</code></pre>
+
+<h2>What you actually get</h2>
+
+<div class="feature-grid">
+
+  <div class="card">
+    <h3 style="margin-top:0">Stable OpenAI-compatible endpoints</h3>
+    <p>Every running model exposes <code>POST /v1/chat/completions</code> on its own local port. Point Aider, Continue.dev, Open Interpreter, lillycoder, or your own scripts at <code>http://localhost:18080/v1</code>; rotate which model is behind that port with <code>stop A &amp;&amp; start B</code>. No client config changes, no API keys.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Container lifecycle without docker-fu</h3>
+    <p><code>start</code>, <code>stop</code>, <code>stop-all</code>, <code>status</code>, <code>api</code>. Two engine images (Vulkan + CPU) build on first <code>setup</code> and auto-select per hardware. CPU fallback if Vulkan misbehaves. Each model gets a stable container name and a reserved port.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Hardware-aware curated catalog</h3>
+    <p><code>list-online</code> filters community GGUFs (Bartowski, lmstudio-community, mradermacher) to what your machine can run. Anonymous downloads — no HF account needed. Tiers cover 4 GB Pi-class up to 70B-on-iGPU Strix-class boxes.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">RAG over any folder <span class="pill new">new</span></h3>
+    <p>Walk + classify code-vs-prose + line-aware chunk + embed each chunk with the right embedder + store in <code>&lt;folder&gt;/.hydra-index/</code> (LanceDB). Re-runs are incremental: only changed files re-embed. Federated query across every folder you've indexed. RRF fusion across code and prose.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Catalog-bound bundles <span class="pill new">new</span></h3>
+    <p>A chat-catalog entry can carry <code>system_prompt</code>, <code>params</code>, <strong>and</strong> a <code>rag_index:</code> path. <code>create &lt;model&gt; &lt;persona.md&gt; &lt;id&gt; --rag-index &lt;path&gt;</code> bakes all three into one alias. Then <code>chat &lt;alias&gt;</code> runs everything, no flags. Move the model+persona+corpus across machines as one declarative unit.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">KDE Plasma 6 panel widget</h3>
+    <p>Per-row Start/Stop, Console launcher, inline log pane, prompt/params editor. HAL-eye tray indicator that breathes faster as system load rises and turns solid red once a model is healthy. Reads the same config as the CLI; <code>addlocal</code> entries appear automatically.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Personas, prompts, params</h3>
+    <p>Three layers, narrowest wins. Persona files in <code>personas/</code>, per-alias prompts in <code>prompts/</code>, per-alias sampling params in <code>params/</code>. Inline catalog values override files. <code>create &lt;model&gt; &lt;persona.md&gt; &lt;id&gt;</code> bakes a persona's body into a new alias as inline <code>system_prompt</code>.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Persistent chat sessions</h3>
+    <p>Sessions saved as JSON in <code>~/.local/state/hydra-llm/sessions/</code>. Resume by name with <code>--session &lt;name&gt;</code>, or pin the session file to any path: <code>chat gemma-2-2b ./project-notes.json</code>.</p>
+  </div>
+
+</div>
+
+<h2>RAG, in depth</h2>
+
+<p>RAG (retrieval-augmented generation) means: when you ask a question, hydra retrieves relevant chunks from a corpus and prepends them to the prompt, so the model answers based on text it didn't have to memorise. hydra-llm's RAG implementation has five moving parts, all reusing the existing engine.</p>
+
+<h3>1. Embedders are a separate model species</h3>
+
+<p>Embedders aren't chat models. They emit fixed-size vectors, run in their own llama-server containers (<code>--embeddings</code> mode), and live in a separate catalog at <code>~/.config/hydra-llm/embedders.yaml</code>. They use a separate port range (default 19080-19099) so they don't collide with chat models. Six curated embedders ship: <code>nomic-embed-text</code>, <code>qwen3-embed-0.6b/4b/8b</code>, <code>bge-m3</code>, <code>nomic-embed-code</code>.</p>
+
+<pre><code>hydra-llm rag list-online            # catalog, filtered to hardware
+hydra-llm rag list                   # what you have installed
+hydra-llm rag download &lt;id&gt;          # pull one
+hydra-llm rag info &lt;id&gt;              # dimensions, pooling, prefix, running state
+hydra-llm rag setup                  # interactive: pick + download recommended pair</code></pre>
+
+<h3>2. Indexing classifies code vs prose</h3>
+
+<p>The walker uses <code>.gitignore</code> (via python-pathspec) plus a builtin blacklist (<code>node_modules</code>, <code>.venv</code>, <code>target</code>, <code>build</code>, lockfiles, binaries, archives, media, weights, files &gt;1 MB). Each file is classified <em>code</em> or <em>prose</em> by extension first (<code>.py</code>, <code>.sh</code>, <code>.md</code>, <code>.rst</code>, ...), then by canonical basenames (<code>Makefile</code>, <code>Dockerfile</code>, <code>README</code>, <code>LICENSE</code>), then by shebang sniff. Code goes to a code embedder; prose to a prose embedder. The chunker is line-aware (1500 chars target, 200 overlap, never splits mid-line).</p>
+
+<pre><code>cd ~/projects/cool-app
+hydra-llm index .                    # full index on first run
+hydra-llm index .                    # incremental: diffs by (mtime, size)
+hydra-llm index . --tag work         # tag this store (--tag is repeatable)
+hydra-llm index . --exclude '*.test.js' --include 'fixtures/important.json'
+hydra-llm index . --depth 2 --max-file-size-mb 0.5
+hydra-llm index . --full             # force a from-scratch rebuild
+hydra-llm index . --dry-run          # print plan, don't embed</code></pre>
+
+<h3>3. Storage is per-folder LanceDB</h3>
+
+<p>Each indexed folder grows a <code>.hydra-index/</code> with two LanceDB tables (<code>code.lance</code>, <code>prose.lance</code>), a <code>meta.yaml</code> recording which embedders the index was built with, and a <code>files.json</code> that drives incremental refresh. The <code>.hydra-index/</code> moves with the folder — copy a project to another machine, the index comes along.</p>
+
+<h3>4. Retrieval uses Reciprocal Rank Fusion</h3>
+
+<p>At query time the question is embedded with <em>both</em> embedders, top-K hits come back from each table, and the lists are fused by RRF (<code>k=60</code>). This is the 2026 best practice for code+prose corpora — it avoids the failure mode where a code embedder mangles README prose, while still surfacing the right code blocks first.</p>
+
+<pre><code>hydra-llm query "where do we handle auth tokens?" --in .
+hydra-llm query "..." --top-k 10 --code-only
+hydra-llm query "..." --tag work          # federated across all tagged stores
+hydra-llm query "..." --all               # federated across every store</code></pre>
+
+<p>Default scope: if cwd has a <code>.hydra-index/</code>, query just that store. Otherwise, query every registered store. Override with <code>--in</code>, <code>--stores</code>, or <code>--tag</code>.</p>
+
+<h3>5. Chat-side RAG augments per turn</h3>
+
+<p>With <code>--rag &lt;path&gt;</code>, every user message is embedded, top-3 chunks are retrieved, and the user message becomes</p>
+
+<pre><code>&lt;context&gt;
+--- src/auth/middleware.go:42-78 ---
+func authenticate(r *http.Request) ...
+--- README.md:54-72 ---
+Auth flow: ...
+&lt;/context&gt;
+
+(your original question)</code></pre>
+
+<p>Saved sessions keep the original (un-augmented) text so resumes don't carry stale context. New REPL slash commands: <code>/rag on|off</code>, <code>/rag-show on|off</code>, <code>/rag-chunks on|off</code>, <code>/rag &lt;text&gt;</code> for one-off retrieval without a model call.</p>
+
+<pre><code>hydra-llm chat llama-3.1-8b --rag .                         # single store
+hydra-llm chat llama-3.1-8b --rag-all                       # every store
+hydra-llm chat llama-3.1-8b --rag-tag work --rag-top-k 5    # by tag
+hydra-llm chat my-bundle                                     # catalog-bound, no flags</code></pre>
+
+<h3>Catalog-bound bundles (the headline feature)</h3>
+
+<p>A chat-catalog entry can carry a <code>rag_index:</code> field. <code>create</code> bakes that field plus a persona's body plus its front-matter params into a new alias.</p>
+
+<pre><code>hydra-llm create llama-3.1-8b ~/personas/senior-engineer.md cool-app-bot \
+    --rag-index ~/projects/cool-app
+
+# Persisted to ~/.config/hydra-llm/catalog.yaml as a single declarative entry:
+#   id: cool-app-bot
+#   filename: Llama-3.1-8B-Instruct-Q4_K_M.gguf   (shared with the base, no extra download)
+#   system_prompt: "You are a senior engineer ..."
+#   rag_index: /home/yavuz/projects/cool-app
+#   tags: [persona-baked, rag-bound]
+#
+# Now:
+hydra-llm chat cool-app-bot</code></pre>
+
+<p>This is what makes hydra-llm distinctive. Other local-RAG CLIs let you index a folder and chat with retrieval. Nobody else treats <em>model + persona + corpus</em> as a single declarative unit you can refer to by name. Move the catalog file across machines, and the bundle moves with it.</p>
 
 <h2>Hardware tiers</h2>
 <table>
-  <thead><tr><th>Tier</th><th>Spec example</th><th>Recommended models</th></tr></thead>
+  <thead><tr><th>Tier</th><th>Spec example</th><th>Recommended chat models</th><th>Recommended embedders</th></tr></thead>
   <tbody>
-    <tr><td><code>tiny</code></td><td>4-8 GB RAM, no dGPU</td><td>SmolLM2, Phi-3.5-mini, Gemma-2-2B</td></tr>
-    <tr><td><code>laptop</code></td><td>16-32 GB RAM, integrated GPU</td><td>Llama-3.1-8B Q4, Mistral-7B Q4</td></tr>
-    <tr><td><code>halo</code></td><td>48+ GB unified RAM, big iGPU (Strix Point/Halo, Apple Silicon Pro/Max)</td><td>Gemma-2-27B Q4, Qwen-2.5-32B Q4</td></tr>
-    <tr><td><code>workstation</code></td><td>24+ GB dGPU</td><td>Llama-3.3-70B Q4</td></tr>
-    <tr><td><code>server</code></td><td>multi-GPU or 64+ GB system RAM</td><td>Llama-3.3-70B Q5, MoEs</td></tr>
+    <tr><td><code>tiny</code></td><td>4-8 GB RAM, no dGPU</td><td>SmolLM2, Phi-3.5-mini, Gemma-2-2B</td><td>nomic-embed-text</td></tr>
+    <tr><td><code>laptop</code></td><td>16-32 GB RAM, integrated GPU</td><td>Llama-3.1-8B Q4, Mistral-7B Q4</td><td>nomic-embed-text + qwen3-embed-0.6b</td></tr>
+    <tr><td><code>halo</code></td><td>48+ GB unified RAM, big iGPU (Strix Point/Halo, Apple Silicon Pro/Max)</td><td>Gemma-2-27B Q4, Qwen-2.5-32B Q4</td><td>nomic-embed-text + qwen3-embed-4b</td></tr>
+    <tr><td><code>workstation</code></td><td>24+ GB dGPU</td><td>Llama-3.3-70B Q4</td><td>+ qwen3-embed-8b for SOTA code retrieval</td></tr>
+    <tr><td><code>server</code></td><td>multi-GPU or 64+ GB RAM</td><td>Llama-3.3-70B Q5, MoEs</td><td>any of the above</td></tr>
   </tbody>
 </table>
-<p><code>hydra-llm doctor</code> classifies your machine automatically.</p>
+<p><code>hydra-llm doctor</code> classifies your machine. <code>hydra-llm rag setup</code> picks the recommended embedder pair for that tier and downloads after a yes/no.</p>
 
-<h2>What you get</h2>
+<h2>Bring your own models</h2>
 
-<h3>Stable OpenAI-compatible endpoints</h3>
-<p>Every running model exposes <code>POST /v1/chat/completions</code> on its own local port from your <code>port_range</code>. Point Aider, Continue.dev, Open Interpreter, or your own scripts at <code>http://localhost:18080/v1</code> and rotate which model is behind that port with <code>hydra-llm stop A &amp;&amp; start B</code>. No client config changes, no API keys.</p>
+<p>Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? One command:</p>
 
-<h3>Container lifecycle without the docker-fu</h3>
-<p><code>start &lt;id&gt;</code>, <code>stop &lt;id&gt;</code>, <code>stop-all</code>, <code>status</code>, <code>api &lt;id&gt;</code>. Two engine images (Vulkan, CPU) are built locally on first <code>setup</code> and auto-selected from your hardware, with a CPU fallback if Vulkan misbehaves. Each model gets a stable container name (<code>hydra-&lt;id&gt;</code>) and a reserved port.</p>
+<pre><code># Single file:
+hydra-llm addlocal /path/to/Llama-3.1-8B-Instruct-Q4_K_M.gguf \
+    --tier laptop --vram-gb 6 --ram-gb 12
 
-<h3>Hardware-aware catalog</h3>
-<p><code>hydra-llm list-online</code> filters a curated GGUF catalog (Bartowski, lmstudio-community, mradermacher) to what your machine can actually run, scored against your tier from <code>hydra-llm doctor</code>. Tiers cover everything from a 4 GB Pi-class box to a 70B-on-iGPU Strix Point/Halo machine. All catalog downloads work without a Hugging Face account; <code>HF_TOKEN</code> is supported but never required.</p>
+# Whole folder, recursively. Bulk-registers every .gguf:
+hydra-llm addlocal /path/to/your/gguf/folder/ --link --tier laptop</code></pre>
 
-<h3>Personas, prompts, and persistent sessions</h3>
-<p>Reusable persona files in <code>~/.config/hydra-llm/personas/&lt;name&gt;.md</code>. Per-alias system prompts in <code>prompts/&lt;alias&gt;.txt</code> and sampling params in <code>params/&lt;alias&gt;.json</code>. Narrowest layer wins. Chat sessions persist as JSON in <code>~/.local/state/hydra-llm/sessions/</code>; resume with <code>--session &lt;name&gt;</code>. Inside the REPL: <code>/params</code>, <code>/set</code>, <code>/reset</code>, <code>/thoughts on|off</code>.</p>
+<p>Folder mode auto-derives the id, name, and port from each file. Group flags (<code>--tier</code>, <code>--family</code>, <code>--license</code>, <code>--gpu-layers</code>, <code>--ram-gb</code>, <code>--vram-gb</code>) apply to every entry. <code>--link</code> creates symlinks under the configured <code>models_dir</code> if the source is elsewhere.</p>
 
-<h3>Single CLI</h3>
-<p><code>hydra-llm</code> with subcommands like <code>setup</code>, <code>doctor</code>, <code>list</code>, <code>list-online</code>, <code>download</code>, <code>addlocal</code>, <code>start</code>, <code>stop</code>, <code>stop-all</code>, <code>status</code>, <code>chat</code>, <code>api</code>, <code>persona</code>, <code>uninstall</code>, <code>wipe</code>.</p>
-
-<h2>The KDE Plasma panel widget</h2>
-<p>For Plasma 6 users, <code>hydra-llm-plasma</code> is the headline experience. Drop the <strong>Hydra LLM</strong> widget on your panel and you get a visual control surface for every model in your catalog without ever opening a terminal:</p>
+<p>Where things live by default:</p>
 <ul class="tight">
-  <li><strong>Per-row Start / Stop</strong>: tear a model up or down. Starting a model auto-opens the inline log console below the list so you can watch it load.</li>
-  <li><strong>Console</strong>: opens your terminal emulator into <code>hydra-llm chat &lt;alias&gt;</code> (tries konsole, gnome-terminal, alacritty, kitty, xfce4-terminal, xterm in that order).</li>
-  <li><strong>Logs</strong>: inline <code>docker logs --tail 80</code> pane per model; toggle on/off without leaving the widget.</li>
-  <li><strong>Configure</strong>: edit the system prompt and sampling params for that alias from a small dialog. Inline catalog values take precedence; the dialog disables Save in that case.</li>
-  <li><strong>HAL-eye indicator</strong> in the tray: breathes faster as CPU/RAM/GPU/VRAM utilisation rises, scans yellow while a container is loading, turns solid red once at least one model is healthy.</li>
+  <li>Chat models: <code>~/.local/share/hydra-llm/models/</code> (override with <code>models_dir</code>)</li>
+  <li>Embedders: <code>~/.local/share/hydra-llm/embedders/</code></li>
+  <li>Configs, personas, prompts, params, catalog overrides: <code>~/.config/hydra-llm/</code></li>
+  <li>Chat sessions: <code>~/.local/state/hydra-llm/sessions/</code></li>
+  <li>RAG store registry: <code>~/.local/state/hydra-llm/rag-stores.json</code></li>
+  <li>Per-folder index: <code>&lt;folder&gt;/.hydra-index/</code></li>
+  <li>Cache: <code>~/.cache/hydra-llm/</code></li>
 </ul>
-<div class="apt">
-<strong>Install:</strong>
-<pre><code>sudo apt install hydra-llm-plasma</code></pre>
-<p style="margin: 10px 0 0 0;">Then right-click the panel &rarr; <em>Add or Manage Widgets...</em> &rarr; drag <strong>Hydra LLM</strong> onto the panel. The widget reads the same <code>~/.config/hydra-llm/</code> as the CLI; anything you register with <code>addlocal</code> shows up automatically.</p>
-</div>
-<p style="opacity: 0.85; font-size: 0.95rem;">Native widgets for GNOME, XFCE, and others are on the roadmap. On every other desktop the CLI works fully today; see <a href="https://github.com/ra-yavuz/hydra-llm/blob/main/INTEGRATIONS.md">INTEGRATIONS.md</a>.</p>
 
 <h2>Pairs with lillycoder</h2>
-<p><a href="https://ra-yavuz.github.io/lillycoder/">lillycoder</a> is a sibling project: a local-first coder REPL with file and shell tools that talks to any OpenAI-compatible <code>/v1</code> endpoint. hydra-llm exposes exactly that endpoint on a stable port, so the two compose into a fully local coding agent in one terminal:</p>
-<pre><code># in hydra-llm:
-hydra-llm start qwen2.5-32b           # or any 'code' tagged model from list-online
+<p><a href="https://ra-yavuz.github.io/lillycoder/">lillycoder</a> is the sibling project: a local-first coder REPL with file and shell tools that talks to any OpenAI-compatible <code>/v1</code> endpoint. hydra-llm provides exactly that, on a stable port. Composed:</p>
+<pre><code># hydra-llm: pick something good at code
+hydra-llm start qwen2.5-32b
 hydra-llm api   qwen2.5-32b           # prints the URL
 
 # in your project directory:
 lillycoder --api http://localhost:18087/v1
 # (lilly auto-detects common local LLM ports too, so just `lillycoder` often works)</code></pre>
-<p>hydra-llm manages the model server (download, start, stop, watch). lillycoder is the agent that sits in front of it, reads/writes files, runs shell commands, and grep's your codebase under a permission gate. No cloud, no API key, no telemetry on either end.</p>
-
-<h2>Bring your own models</h2>
-<p>Already have a folder of GGUFs from Ollama, LM Studio, or a manual download? Two steps.</p>
-<p><strong>1. Point hydra-llm at the folder</strong> (optional; otherwise the default <code>~/.local/share/hydra-llm/models/</code> is used):</p>
-<pre><code>mkdir -p ~/.config/hydra-llm
-cat &gt; ~/.config/hydra-llm/config.yaml &lt;&lt;'YAML'
-models_dir: /path/to/your/existing/gguf/folder
-YAML</code></pre>
-<p><strong>2. Register each file</strong> with <code>hydra-llm addlocal</code>:</p>
-<pre><code># File already lives under models_dir:
-hydra-llm addlocal /path/to/Llama-3.1-8B-Instruct-Q4_K_M.gguf \
-  --tier laptop --vram-gb 6 --ram-gb 12
-
-# File lives somewhere else; create a symlink under models_dir:
-hydra-llm addlocal ~/some/where/My-Finetune-Q4_K_M.gguf \
-  --link --tier workstation --vram-gb 24</code></pre>
-<p><code>addlocal</code> derives a sensible id from the filename, picks the next free port, fills in the file size, and writes a YAML entry to <code>~/.config/hydra-llm/catalog.yaml</code>. Useful flags: <code>--id</code>, <code>--name</code>, <code>--tier</code> (repeat for multiple), <code>--ram-gb</code>, <code>--vram-gb</code>, <code>--gpu-layers</code>, <code>--port</code>, <code>--family</code>, <code>--license</code>, <code>--context</code>, <code>--link</code>, <code>--replace</code>, <code>--yes</code>. You can always edit the YAML by hand afterwards.</p>
-<p>Where things live by default:</p>
-<ul class="tight">
-  <li>Models: <code>~/.local/share/hydra-llm/models/</code> (override with <code>models_dir</code>)</li>
-  <li>Configs, personas, prompts, params: <code>~/.config/hydra-llm/</code></li>
-  <li>Chat sessions: <code>~/.local/state/hydra-llm/sessions/</code></li>
-  <li>Cache: <code>~/.cache/hydra-llm/</code></li>
-</ul>
+<p>hydra-llm manages the model server. lillycoder is the agent that sits in front of it: reads/writes files, runs shell commands, greps your codebase, all under a permission gate. No cloud, no API key, no telemetry on either end.</p>
 
 <h2>Privacy</h2>
 <ul class="tight">
   <li>No telemetry, no analytics, no auto-update calls.</li>
-  <li>All inference runs locally in Docker.</li>
+  <li>All inference runs locally, in Docker, on your machine.</li>
   <li>Chat sessions stay on your disk; the CLI never uploads them.</li>
-  <li>Model downloads work without a Hugging Face account. <code>HF_TOKEN</code> is supported but never required.</li>
+  <li>Model and embedder downloads work without a Hugging Face account. <code>HF_TOKEN</code> is honored but never required.</li>
+  <li>RAG indexes never leave your machine. The chunk text is stored in the LanceDB at <code>&lt;folder&gt;/.hydra-index/</code>; embeddings are computed locally by the embedder container; queries never go to a third party.</li>
 </ul>
+
+<h2>Command reference (cheat sheet)</h2>
+
+<details>
+<summary>Chat-model lifecycle</summary>
+<pre><code>hydra-llm doctor               detect hardware tier
+hydra-llm setup                first-run for chat models
+hydra-llm list-online          browse the chat catalog
+hydra-llm list                 catalogued models, with downloaded/running/RAG state
+hydra-llm download &lt;id&gt;        pull a chat model GGUF
+hydra-llm addlocal &lt;file|dir&gt;  register your own GGUFs
+hydra-llm start &lt;id&gt;           launch the chat-model container
+hydra-llm stop &lt;id&gt;            stop one
+hydra-llm stop-all             stop every chat-model container
+hydra-llm status               running containers, ready state
+hydra-llm api &lt;id&gt;             print the OpenAI endpoint URL
+hydra-llm chat &lt;id&gt;            interactive REPL
+hydra-llm autostart &lt;id&gt;       start at login (user systemd unit)
+hydra-llm config &lt;id&gt; [k] [v]  read/write per-alias server settings
+hydra-llm create &lt;m&gt; &lt;p.md&gt; &lt;id&gt; [--rag-index &lt;path&gt;]
+                               bake a persona (and optional corpus) into an alias
+hydra-llm persona list|show|path</code></pre>
+</details>
+
+<details>
+<summary>RAG pipeline</summary>
+<pre><code>hydra-llm rag setup            interactive first-run for RAG
+hydra-llm rag list-online      browse the embedder catalog
+hydra-llm rag list             installed embedders, with running state
+hydra-llm rag download &lt;id&gt;    pull an embedder GGUF
+hydra-llm rag addlocal &lt;file&gt;  register your own embedder GGUF
+hydra-llm rag remove &lt;id&gt;      delete an installed embedder
+hydra-llm rag info &lt;id&gt;        details, runtime status
+hydra-llm rag stores [--prune] folders that have been indexed
+hydra-llm rag stop &lt;id&gt;        stop one embedder sidecar
+hydra-llm rag stop-all         stop every embedder sidecar
+hydra-llm index [path]         build/refresh a per-folder RAG index
+hydra-llm query "&lt;text&gt;"       search; defaults to cwd, federates if needed
+hydra-llm chat &lt;m&gt; --rag &lt;path&gt; chat with retrieval (single store)
+hydra-llm chat &lt;m&gt; --rag-all           chat with retrieval across every store
+hydra-llm chat &lt;m&gt; --rag-tag &lt;t&gt;       chat with retrieval across tagged stores
+hydra-llm chat &lt;bundle-alias&gt;          chat with a catalog-bound bundle (no flags)</code></pre>
+</details>
+
+<details>
+<summary>Inside the chat REPL</summary>
+<pre><code>/help               show all slash commands
+/quit, /exit        leave the chat
+/reset              clear history but keep the system prompt
+/params             show current sampling params
+/set &lt;k&gt; &lt;v&gt;        change a param for this session only
+/thoughts on|off    show or hide reasoning_content blocks
+/rag on|off         toggle retrieval for this session
+/rag-show on|off    show/hide the [rag: N chunks] line
+/rag-chunks on|off  echo retrieved chunk locations to the terminal
+/rag &lt;text&gt;         one-off retrieval, prints hits without sending to model</code></pre>
+</details>
 
 <h2>Uninstall</h2>
 <p>If you installed via apt:</p>
 <pre><code>sudo apt remove hydra-llm hydra-llm-plasma   # add --purge to also drop config</code></pre>
 <p>If you installed with the one-liner (user mode, lives under <code>~/.local</code>):</p>
 <pre><code>hydra-llm uninstall   # keeps configs and downloaded models
-hydra-llm wipe        # also deletes models, sessions, engine image</code></pre>
-<p>Both paths stop running model containers and remove the Plasma widget files. The user-mode uninstaller also refreshes <code>plasmashell</code> so the tray icon clears immediately. After <code>apt remove hydra-llm-plasma</code>, log out and back in (or run <code>kquitapp6 plasmashell &amp;&amp; kstart plasmashell</code>) to refresh the panel.</p>
+hydra-llm wipe        # also deletes models, embedders, sessions, engine image</code></pre>
+<p>Both paths stop running model containers and remove the Plasma widget files. The user-mode uninstaller refreshes <code>plasmashell</code> so the tray icon clears immediately. After <code>apt remove hydra-llm-plasma</code>, log out and back in (or run <code>kquitapp6 plasmashell &amp;&amp; kstart plasmashell</code>) to refresh the panel.</p>
+
+<hr class="soft">
+
+<h2 id="disclaimer">Full disclaimer</h2>
+
+<p>This software runs large language models on your machine, manages Docker containers on your behalf, downloads multi-gigabyte model files from third-party hosts (primarily Hugging Face community mirrors), exposes HTTP APIs on local ports, and — when you use the RAG features — reads files inside any directory you index and stores embeddings of them on disk. It is provided <strong>as is, without warranty of any kind</strong>, express or implied, including but not limited to merchantability, fitness for a particular purpose, and noninfringement.</p>
+
+<p>By installing or running this software you accept that:</p>
+
+<ul class="tight">
+  <li>You alone are responsible for any damage to your hardware, data, network, or system.</li>
+  <li>The author(s) and contributors are <strong>not liable</strong> for any harm, data loss, hardware failure, security incident, model output, voided warranty, or other damages, however caused.</li>
+  <li>LLM weights and embedder weights downloaded via this tool are governed by their own upstream licenses (Llama, Gemma, Mistral, Qwen, Nomic, BGE, etc.). You are responsible for complying with each model's license. Some models prohibit specific uses; read the model card before using one in production.</li>
+  <li>LLM outputs are unreliable. They will hallucinate, repeat training data, give incorrect medical/legal/financial advice, and produce harmful or biased content. <strong>Do not rely on them for safety-critical decisions.</strong> RAG <em>reduces</em> hallucination but does not eliminate it; the model can still misquote retrieved chunks.</li>
+  <li>The RAG pipeline reads files in any directory you point <code>hydra-llm index</code> at and stores chunked text plus embeddings of those files at <code>&lt;directory&gt;/.hydra-index/</code>. If a directory contains secrets, credentials, or sensitive personal data, those will be embedded into a local LanceDB index. The index never leaves your machine, but anyone with read access to that directory can read the index. Audit what you index.</li>
+  <li>Running large models stresses CPU, RAM, and GPU. Sustained high utilisation can cause thermal throttling, fan wear, or in poorly-cooled systems, hardware damage. Monitor your machine.</li>
+  <li>The CLI shells out to <code>docker</code>. A misconfigured Docker setup or an attacker who can write to your config files could be used to run arbitrary containers as your user.</li>
+</ul>
+
+<p>If you do not accept these terms, do not install or run this software.</p>
+
+<p>Full legal license: <a href="https://github.com/ra-yavuz/hydra-llm/blob/main/LICENSE">MIT</a>.</p>
 
 <h2>Source</h2>
 <ul class="tight">
