@@ -70,9 +70,19 @@ def main():
     p.set_defaults(func=cmd_download)
 
     p = sub.add_parser("addlocal",
-                       help="register an existing GGUF on disk as a catalog entry",
-                       parents=[json_parent])
-    p.add_argument("file", help="path to the .gguf file you want to register")
+                       help="register an existing GGUF (or a folder of GGUFs) as catalog entries",
+                       parents=[json_parent],
+                       description=(
+                           "Pass a single .gguf to register one model, or a "
+                           "folder to bulk-register every .gguf under it.\n\n"
+                           "Folder mode auto-derives id, name, port, and size "
+                           "per file. Group flags (--tier, --family, --license, "
+                           "--ram-gb, --vram-gb, --gpu-layers, --context, --link) "
+                           "apply to every entry. Per-file flags (--id, --name, "
+                           "--port) are ignored in folder mode."
+                       ),
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("file", help="path to the .gguf file or a folder containing .gguf files")
     p.add_argument("--id", dest="alias_id",
                    help="catalog id (default: derived from the filename)")
     p.add_argument("--name", help="human-readable name (default: derived from the filename)")
@@ -844,11 +854,164 @@ def _next_free_port(cfg, taken: set[int]) -> int | None:
     return None
 
 
+def _addlocal_folder(args, folder: Path, cfg: dict) -> int:
+    """Bulk-register every *.gguf under `folder` (recursively).
+
+    Each file gets:
+      - id derived from filename via _slug_from_filename
+      - name from filename stem
+      - default_port auto-picked from port_range
+      - filename relative to models_dir if symlinked, else just basename
+      - per-file size_gb computed from the file
+    Group-level flags (--tier, --ram-gb, --vram-gb, --gpu-layers, --family,
+    --license, --context, --link) carry through to every entry.
+    """
+    ggufs = sorted(folder.rglob("*.gguf"))
+    if not ggufs:
+        msg = f"no .gguf files found under {folder}"
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+
+    models_dir = Path(cfg.get("models_dir") or paths.MODELS_DIR_DEFAULT).expanduser().resolve()
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-compute the entries we'd write so we can show a confirm prompt.
+    # Port strategy for folder mode: round-robin through port_range.
+    # Sharing default_port with shipped-catalog entries is intentional --
+    # only one model runs per port at a time, the user picks; this matches
+    # how the rest of the catalog is dimensioned for ~20 entries on 20 ports.
+    lo, hi = cfg.get("port_range", [18080, 18099])
+    port_cycle = [p for p in range(lo, hi + 1)]
+    if not port_cycle:
+        port_cycle = [18080]
+
+    catalog, _ = cfg_mod.load_catalog()
+
+    planned = []
+    skipped = []
+    for i, path in enumerate(ggufs):
+        try:
+            path.relative_to(models_dir)
+            in_models = True
+        except ValueError:
+            in_models = False
+        if not in_models and not args.link:
+            skipped.append((str(path), "outside models_dir; pass --link to symlink"))
+            continue
+        on_disk_filename = path.name
+        alias = _slug_from_filename(path.stem)
+        # If alias collides with a planned entry, suffix with -2, -3 etc.
+        existing_ids = {p["id"] for p in planned} | {m["id"] for m in catalog}
+        original_alias = alias
+        n = 2
+        while alias in existing_ids and not args.replace:
+            alias = f"{original_alias}-{n}"
+            n += 1
+        # Round-robin through the port range. This intentionally allows
+        # different aliases to share a port number; only one runs at a time.
+        port = port_cycle[i % len(port_cycle)]
+        size_gb = round(path.stat().st_size / (1024 ** 3), 2)
+        entry: dict = {
+            "id": alias,
+            "name": path.stem.replace("_", " ").replace("-", " "),
+            "filename": on_disk_filename,
+            "size_gb": size_gb,
+            "default_port": port,
+            "gpu_layers": args.gpu_layers,
+            "recommended_for": list(args.tiers or []),
+            "tags": ["local", "bulk-imported"],
+        }
+        if args.ram_gb is not None:
+            entry["needs_ram_gb"] = args.ram_gb
+        if args.vram_gb is not None:
+            entry["fits_in_vram_gb"] = args.vram_gb
+        if args.context is not None:
+            entry["context"] = args.context
+        if args.family:
+            entry["family"] = args.family
+        if args.license:
+            entry["license"] = args.license
+        # Stash the source path so the actual symlink/move happens during write.
+        entry["__src_path"] = str(path)
+        entry["__in_models_dir"] = in_models
+        planned.append(entry)
+
+    if not args.json and not args.yes:
+        print(f"Will register {len(planned)} model(s) in {paths.USER_CATALOG}:")
+        print(f"  models_dir: {models_dir}\n")
+        for p in planned[:30]:
+            print(f"  - {p['id']:<32} {p['size_gb']:>5.1f} GB  port {p['default_port']}  ({p['filename']})")
+        if len(planned) > 30:
+            print(f"  ...and {len(planned) - 30} more")
+        if skipped:
+            print(f"\nSkipped {len(skipped)} file(s):")
+            for path, why in skipped[:10]:
+                print(f"  - {path}: {why}")
+            if len(skipped) > 10:
+                print(f"  ...and {len(skipped) - 10} more")
+        ans = input(f"\nWrite {len(planned)} entries? [Y/n] ").strip().lower()
+        if ans and ans not in ("y", "yes"):
+            print("aborted.")
+            return 0
+
+    added_ids = []
+    write_errors = []
+    for entry in planned:
+        src_path = Path(entry.pop("__src_path"))
+        in_models = entry.pop("__in_models_dir")
+        if not in_models:
+            link_path = models_dir / src_path.name
+            if link_path.exists() or link_path.is_symlink():
+                if link_path.resolve() != src_path:
+                    write_errors.append((entry["id"],
+                                          f"{link_path} already exists pointing elsewhere"))
+                    continue
+            else:
+                try:
+                    link_path.symlink_to(src_path)
+                except OSError as e:
+                    write_errors.append((entry["id"], f"symlink failed: {e}"))
+                    continue
+        try:
+            cfg_mod.add_user_catalog_entry(entry, replace=args.replace)
+            added_ids.append(entry["id"])
+        except cfg_mod.CatalogError as e:
+            write_errors.append((entry["id"], str(e)))
+
+    if args.json:
+        print(json.dumps({
+            "ok": True,
+            "added": added_ids,
+            "skipped": [{"path": p, "reason": r} for p, r in skipped],
+            "errors": [{"id": i, "error": e} for i, e in write_errors],
+        }, indent=2))
+    else:
+        print(f"\nAdded {len(added_ids)} model(s).")
+        if write_errors:
+            print(f"Errors:")
+            for i, e in write_errors:
+                print(f"  - {i}: {e}")
+        print(f"\nNext: hydra-llm list")
+    return 0 if not write_errors else 1
+
+
 def cmd_addlocal(args):
     cfg = cfg_mod.load_user_config()
     src = Path(args.file).expanduser().resolve()
+
+    # Folder mode: scan for *.gguf and bulk-register. Per-file flags like
+    # --id and --port don't apply (each file gets a derived id and an
+    # auto-assigned port); --tier, --family, --license, --ram-gb, --vram-gb,
+    # --gpu-layers DO carry through (they describe the hardware needs of a
+    # group of similar files like "all my Q4_K_M weights for halo tier").
+    if src.is_dir():
+        return _addlocal_folder(args, src, cfg)
+
     if not src.is_file():
-        msg = f"file not found: {src}"
+        msg = f"path not found: {src}"
         if args.json:
             print(json.dumps({"ok": False, "error": msg}))
         else:
