@@ -167,27 +167,62 @@ hydra-llm chat gemma-2-2b ./project-notes.json
 
 ## RAG: index a folder, chat with retrieval
 
-RAG (retrieval-augmented generation) means: when you ask a question, hydra retrieves relevant chunks from a corpus and prepends them to the prompt, so the model answers based on text it didn't have to memorise. hydra-llm's RAG implementation has five moving parts, all reusing the existing engine.
+RAG (retrieval-augmented generation) means: when you ask a question, hydra retrieves relevant chunks from a corpus and prepends them to the prompt, so the model answers based on text it didn't have to memorise.
+
+### What is an embedder
+
+An **embedder** is a small specialised model that does one thing: take a piece of text in, output a fixed-size list of numbers (a vector) out. Different texts that mean similar things produce vectors that are mathematically close. That is what makes "find the chunk most similar to this question" possible: the question becomes a vector, every chunk in your folder is already a vector, and finding nearest neighbours is just arithmetic.
+
+Embedders are not chat models. They do not generate text. They run in their own `llama-server --embeddings` containers (separate port range from chat models, default 19080-19099) and live in a separate catalog at `~/.config/hydra-llm/embedders.yaml`. Six curated embedders ship: `nomic-embed-text` (lightweight, prose-leaning), `qwen3-embed-{0.6b,4b,8b}` (instruction-aware, strong on code), `bge-m3` (multilingual), `nomic-embed-code` (code-tuned).
+
+### Single-embedder vs dual-index mode
+
+By default, hydra runs **single-embedder mode**: one embedder serves all your chunks (both code and prose). One GGUF on disk, one container at query time, one LanceDB index per folder. Cheap, simple, fine for most personal-scale projects.
+
+There is also an opt-in **dual-index mode** that runs *two* embedders (one tuned for code, one for prose), maintains a separate index per kind, and fuses query results via Reciprocal Rank Fusion at retrieval time. The theory: code questions surface from the code table, prose questions surface from the prose table, fusion gives you the best of both.
+
+Most users should stay on single. The honest numbers: dual-index buys measurable retrieval quality on very large mixed corpora (think a monorepo with thousands of source files plus hundreds of design docs), but for personal-scale folders the marginal quality difference is small. The cost is two embedder downloads (often 4+ GB combined), two embedder containers running concurrently, two indexes per folder, and the fusion logic at query time.
+
+Turn dual mode on later with:
+
+```sh
+hydra-llm rag setup --dual                # one-off
+# or persist:
+echo 'rag: { dual_index: true }' >> ~/.config/hydra-llm/config.yaml
+```
+
+Switching modes requires a one-time re-index of any existing folders.
 
 ### 1. First-run for RAG
 
 ```sh
 hydra-llm rag setup
-# Detected hardware tier: halo (Strix Point / Halo, Apple Silicon Pro/Max)
-# Recommended embedders for your tier:
-#   code:  qwen3-embed-4b   2.5 GB
-#   prose: nomic-embed-text 0.27 GB
-# Download both? [Y/n]
 ```
 
-Embedders are a separate model species from chat models. They emit fixed-size vectors instead of text, run in their own llama-server containers (`--embeddings` mode), and live in a separate catalog at `~/.config/hydra-llm/embedders.yaml`. They use a separate port range (default 19080-19099) so they don't collide with chat models. Six curated embedders ship: `nomic-embed-text`, `qwen3-embed-{0.6b,4b,8b}`, `bge-m3`, `nomic-embed-code`.
+Detects your hardware tier and presents a numbered menu:
 
-Browse and pick manually with:
+```
+Recommended embedder for your tier: qwen3-embed-4b  (2.5 GB)  (NOT installed)
+  Default code embedder for halo+ tier. Instruction-aware ...
+
+Options:
+  1. Download recommended (qwen3-embed-4b, 2.5 GB)
+  2. Use already-installed nomic-embed-text (prose)
+  3. Pick a different embedder from the catalog
+  4. Cancel; do nothing
+
+Number [1-4, default 1]:
+```
+
+If you already have an embedder on disk (from a previous test, or from a manual `hydra-llm rag download`), it shows up as option 2 so you don't get pushed into a 2.5 GB download you don't need.
+
+Browse and pick manually any time:
 
 ```sh
 hydra-llm rag list-online            # catalog, filtered to hardware
 hydra-llm rag download <id>          # pull one
 hydra-llm rag info <id>              # dimensions, pooling, prefix, running state
+hydra-llm rag list                   # what is installed locally
 ```
 
 ### 2. Index any folder
