@@ -10,17 +10,23 @@ from pathlib import Path
 from . import paths
 
 
-def download(catalog_entry, cfg, force: bool = False, on_progress=None) -> Path:
-    """Download the GGUF for catalog_entry into cfg['models_dir'].
-    Returns the destination Path. Raises on error.
+def download(catalog_entry, cfg, force: bool = False, on_progress=None,
+             dest_dir: Path | None = None) -> Path:
+    """Download the GGUF for catalog_entry into dest_dir, defaulting to
+    cfg['models_dir']. Returns the destination Path. Raises on error.
 
-    on_progress(downloaded_bytes, total_bytes) called periodically; if None, prints to stderr.
+    on_progress(downloaded_bytes, total_bytes) called periodically; if None,
+    prints to stderr. Pass dest_dir to direct the download somewhere other
+    than the chat-models directory (e.g. the embedders dir for RAG).
     """
     url = catalog_entry["url"]
     filename = catalog_entry["filename"]
-    models_dir = Path(cfg.get("models_dir") or paths.MODELS_DIR_DEFAULT).expanduser()
-    models_dir.mkdir(parents=True, exist_ok=True)
-    dest = models_dir / filename
+    if dest_dir is not None:
+        target_dir = Path(dest_dir).expanduser()
+    else:
+        target_dir = Path(cfg.get("models_dir") or paths.MODELS_DIR_DEFAULT).expanduser()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    dest = target_dir / filename
 
     if dest.exists() and not force:
         return dest

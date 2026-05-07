@@ -29,6 +29,7 @@ install -m 0755 "$ROOT/bin/hydra-llm"                          "$PKG/usr/bin/hyd
 ln -sf hydra-llm                                               "$PKG/usr/bin/hydrallm"
 install -m 0644 "$ROOT"/lib/hydra_llm/*.py                     "$PKG/usr/lib/hydra-llm/hydra_llm/"
 install -m 0644 "$ROOT/catalog/catalog.yaml"                   "$PKG/usr/share/hydra-llm/catalog.yaml"
+install -m 0644 "$ROOT/catalog/embedders.yaml"                 "$PKG/usr/share/hydra-llm/embedders.yaml"
 install -m 0644 "$ROOT/personas/friendly-tutor.md"             "$PKG/usr/share/hydra-llm/personas/friendly-tutor.md"
 install -m 0644 "$ROOT/personas/concise-coder.md"              "$PKG/usr/share/hydra-llm/personas/concise-coder.md"
 install -m 0644 "$ROOT/docker/Dockerfile.vulkan"               "$PKG/usr/share/hydra-llm/docker/Dockerfile.vulkan"
@@ -45,12 +46,12 @@ Version: ${VERSION}
 Section: utils
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.10), python3-yaml, docker.io | docker-ce | podman-docker, bash (>= 4.0), curl, git
+Depends: python3 (>= 3.10), python3-yaml, python3-pathspec, python3-numpy, docker.io | docker-ce | podman-docker, bash (>= 4.0), curl, git
 Recommends: vulkan-tools, mesa-vulkan-drivers
 Suggests: hydra-llm-plasma
 Maintainer: Ramazan Yavuz <yavuzramazan1994@gmail.com>
 Homepage: https://github.com/ra-yavuz/hydra-llm
-Description: run local LLMs the easy way (CLI)
+Description: run local LLMs the easy way (CLI, with RAG)
  hydra-llm is a single-command interface for running large language models
  locally with llama.cpp packaged in Docker. Includes a curated catalog of
  community-quantized GGUFs that download anonymously, a hardware doctor
@@ -58,12 +59,25 @@ Description: run local LLMs the easy way (CLI)
  personalities, persistent chat sessions, and a JSON status API used by
  the companion Plasma widget.
  .
+ RAG (retrieval-augmented generation): index any folder with
+ \`hydra-llm index <path>\`, query with \`hydra-llm query "..."\`, or chat
+ with retrieval via \`hydra-llm chat <model> --rag <path>\`. Embedders run
+ in their own llama.cpp containers on a separate port range. LanceDB
+ stores vectors per-folder. Code and prose use separate embedders, with
+ Reciprocal Rank Fusion across both. Cross-folder federated query and
+ per-store tags supported.
+ .
+ Catalog-bound bundles: \`hydra-llm create <model> <persona.md> <id>
+ --rag-index <path>\` bakes a model + persona + corpus into one alias.
+ \`hydra-llm chat <id>\` then runs everything without flags.
+ .
  Quick start: hydra-llm setup ; hydra-llm chat smollm2-135m
  .
  DISCLAIMER: provided AS IS, no warranty. Runs LLMs and Docker containers
- on your behalf and downloads multi-gigabyte files. The author is not
- liable for any damage to hardware, data, or system, or for the content
- of model output. See /usr/share/doc/hydra-llm/README.md for full text.
+ on your behalf, downloads multi-gigabyte files, and reads files under
+ directories you index. The author is not liable for any damage to
+ hardware, data, or system, or for the content of model output. See
+ /usr/share/doc/hydra-llm/README.md for full text.
 EOF
 
 : > "$PKG/DEBIAN/conffiles"

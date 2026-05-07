@@ -1,3 +1,67 @@
+hydra-llm (0.2.0-1) unstable; urgency=low
+
+  * RAG (retrieval-augmented generation) lands as a first-class feature.
+    Five new subsystems wired together by the existing engine.
+  * `hydra-llm rag` subcommand group manages embedders -- a separate
+    model species from chat models, distinguished by their dedicated
+    catalog (catalog/embedders.yaml), separate port range
+    (19080..19099), separate container prefix (hydra-embed-), and
+    different llama-server invocation (--embeddings, --pooling,
+    --ubatch-size). Six curated embedders ship in the catalog:
+    nomic-embed-text (default prose), qwen3-embed-0.6b/4b/8b, bge-m3,
+    nomic-embed-code (default code).
+  * `hydra-llm rag setup` walks first-time users through downloading
+    the recommended code+prose pair for their hardware tier. Used
+    interactively or via --non-interactive in CI. Re-running is
+    idempotent.
+  * `hydra-llm rag list-online`, `list`, `download`, `remove`, `info`,
+    `addlocal`, `stop`, `stop-all`, `stores [--prune]` round out the
+    embedder lifecycle.
+  * `hydra-llm index <path>` walks a folder, classifies files as code
+    or prose (extension + canonical-basename + shebang sniff), chunks
+    them line-aware (1500 chars target, 200 overlap), and embeds each
+    chunk with the appropriate embedder. Storage is per-folder LanceDB
+    at <path>/.hydra-index/. Idempotent: re-running diffs against
+    (mtime, size) and only re-embeds deltas. --full forces rebuild;
+    --tag <name> labels the store; --exclude/--include layer over
+    .gitignore (parsed via python3-pathspec).
+  * `hydra-llm query "<text>"` runs Reciprocal Rank Fusion across
+    the code and prose indexes (k=60). Defaults: cwd if it has an
+    index, else federated across every registered store. --in,
+    --stores, --tag, --all explicitly scope. --code-only / --prose-only
+    restrict modes.
+  * Federated retrieval: distinct embedders are brought up once and
+    reused across stores; the query is embedded once per distinct
+    embedder; per-store hits fuse via RRF. Stores whose embedder is
+    missing are skipped, not fatal.
+  * `hydra-llm chat <model> --rag <path>` adds per-turn retrieval to
+    the chat REPL. Augmented prompt has the form
+    "<context>{chunks}</context>\n\n{user-text}". Saved session keeps
+    the un-augmented user message so resumes don't carry stale
+    context. New flags: --rag-all, --rag-tag, --rag-stores, --rag-top-k,
+    --rag-code-only, --rag-prose-only, --rag-show-chunks, --no-rag.
+    New REPL slash commands: /rag on|off, /rag-show on|off,
+    /rag-chunks on|off, /rag <text> for one-off retrieval.
+  * Catalog-bound bundles (the headline ergonomics): chat-catalog
+    entries gain a `rag_index:` field. `hydra-llm chat <alias>` with
+    no flags auto-loads the bound corpus. `hydra-llm create
+    <model> <persona.md> <id> --rag-index <path>` bakes a model +
+    persona + corpus into a single declarative alias. `hydra-llm list`
+    and `status` grow a `RAG` column when at least one entry is
+    bound.
+  * New Python deps: python3-pathspec (.gitignore parser),
+    python3-numpy. lancedb is pip-installed by install.sh post-deb-
+    install (no manylinux wheel in apt yet).
+  * docker_driver gains start_embedder, ensure_embedder_running,
+    list_running_embedders, stop_embedder, stop_all_embedders.
+    Embedder containers run with --ubatch-size 2048 (or max_tokens,
+    whichever is smaller) so chunks longer than llama-server's 512-
+    token default don't 500.
+  * The Plasma widget JSON gains a `rag_index` field per model. The
+    QML doesn't render it yet; that's a separate plasmoid update.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Thu, 07 May 2026 11:10:00 +0000
+
 hydra-llm (0.1.12-1) unstable; urgency=low
 
   * New `hydra-llm config <alias>` subcommand: read or write per-alias

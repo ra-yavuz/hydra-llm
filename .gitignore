@@ -34,3 +34,4 @@ state/
 personas/*.md
 !personas/friendly-tutor.md
 !personas/concise-coder.md
+.hydra-index/

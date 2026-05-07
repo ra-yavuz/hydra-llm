@@ -11,7 +11,17 @@ class CatalogError(ValueError):
 
 DEFAULT_CONFIG = {
     "models_dir": str(paths.MODELS_DIR_DEFAULT),
+    "embedders_dir": str(paths.EMBEDDERS_DIR_DEFAULT),
     "port_range": [18080, 18099],
+    # Separate port range for embedder sidecars so they don't compete with
+    # chat-model port assignments. 19080..19099 mirrors the chat range.
+    "embedder_port_range": [19080, 19099],
+    # Embedder container name prefix (separate from chat-model container_prefix).
+    "embedder_container_prefix": "hydra-embed-",
+    # Tear an idle embedder down after this many seconds. Set to 0 to keep
+    # embedders running until explicitly stopped. Default 60s gives a query
+    # followed by another query enough time to reuse the warm container.
+    "embedder_idle_ttl_seconds": 60,
     "compose_project": "hydra-llm",
     "container_prefix": "hydra-",
     # Auto-pick CPU vs Vulkan image. Override with explicit "image: vulkan|cpu".

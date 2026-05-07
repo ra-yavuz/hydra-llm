@@ -14,6 +14,8 @@ Architecture: all
 Depends: ${misc:Depends},
          python3 (>= 3.10),
          python3-yaml,
+         python3-pathspec,
+         python3-numpy,
          docker.io | docker-ce | podman-docker,
          bash (>= 4.0),
          curl,
