@@ -121,6 +121,10 @@ def main():
     p.add_argument("new_id", nargs="?",
                    help="catalog id for the new alias (default: <base>-<persona-stem>)")
     p.add_argument("--port", type=int, help="override the auto-picked port")
+    p.add_argument("--rag-index", dest="rag_index",
+                   help="bind a RAG corpus path to this alias. Subsequent "
+                        "`hydra-llm chat <new-alias>` will retrieve from "
+                        "<path>/.hydra-index/ at every turn without flags.")
     p.add_argument("--replace", action="store_true",
                    help="overwrite an existing user-catalog entry with the same id")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
@@ -523,9 +527,12 @@ def cmd_status(args):
     # that are downloaded but have no container appear with "-" status.
     ordered = _enumerated_aliases(cfg)
     by_alias = {r["alias"]: r for r in rows}
+    catalog, _ = cfg_mod.load_catalog()
+    rag_by_alias = {m["id"]: m.get("rag_index") for m in catalog}
     display = []
     for i, alias in enumerate(ordered, 1):
         r = by_alias.get(alias)
+        rag_idx = rag_by_alias.get(alias)
         if r is not None:
             display.append({
                 "index": i,
@@ -535,6 +542,7 @@ def cmd_status(args):
                 "port": r["port"],
                 "status": r["status"],
                 "ready": r.get("ready", False),
+                "rag_index": rag_idx,
             })
         else:
             display.append({
@@ -545,6 +553,7 @@ def cmd_status(args):
                 "port": None,
                 "status": "not started",
                 "ready": False,
+                "rag_index": rag_idx,
             })
     if args.json:
         print(json.dumps({"ok": True, "rows": display}, indent=2))
@@ -553,10 +562,25 @@ def cmd_status(args):
         print("No models downloaded and no containers found.")
         print("Browse: hydra-llm list-online")
         return 0
-    print(f"{'#':<3} {'ALIAS':<32} {'PORT':<6} {'READY':<6} STATUS")
+    has_any_rag = any(d.get("rag_index") for d in display)
+    if has_any_rag:
+        print(f"{'#':<3} {'ALIAS':<32} {'PORT':<6} {'READY':<6} {'RAG':<22} STATUS")
+    else:
+        print(f"{'#':<3} {'ALIAS':<32} {'PORT':<6} {'READY':<6} STATUS")
     for d in display:
         ready = "yes" if d["ready"] else "no"
-        print(f"{d['index']:<3} {d['alias']:<32} {d['port'] or '-':<6} {ready:<6} {d['status']}")
+        if has_any_rag:
+            rag = d.get("rag_index") or "-"
+            if rag != "-":
+                from os.path import expanduser
+                home = expanduser("~")
+                if rag.startswith(home):
+                    rag = "~" + rag[len(home):]
+                if len(rag) > 21:
+                    rag = "…" + rag[-20:]
+            print(f"{d['index']:<3} {d['alias']:<32} {d['port'] or '-':<6} {ready:<6} {rag:<22} {d['status']}")
+        else:
+            print(f"{d['index']:<3} {d['alias']:<32} {d['port'] or '-':<6} {ready:<6} {d['status']}")
     print()
     print("Tip: `hydra-llm start <#>` / `stop <#>` / `autostart <#>` accept these index numbers.")
     return 0
@@ -573,6 +597,7 @@ def cmd_list(args):
         downloaded = downloader.is_downloaded(m, cfg)
         r = by_alias_running.get(m["id"])
         fits, why = hardware.fits_locally(m, snap)
+        rag_index = m.get("rag_index")
         out_rows.append({
             "id": m["id"],
             "name": m.get("name", m["id"]),
@@ -582,6 +607,7 @@ def cmd_list(args):
             "running_port": r["port"] if r else None,
             "fit": fits,
             "fit_why": why,
+            "rag_index": rag_index,
         })
     ordered = _enumerated_aliases(cfg)
     index_by_alias = {a: i + 1 for i, a in enumerate(ordered)}
@@ -593,12 +619,29 @@ def cmd_list(args):
     if not out_rows:
         print("Catalog is empty. Set HYDRA_LLM_CATALOG or install hydra-llm package.")
         return 1
-    print(f"{'#':<3} {'ID':<22} {'SIZE':<7} {'DOWNL':<7} {'RUN':<5} {'FIT':<6} NAME")
+    has_any_rag = any(r.get("rag_index") for r in out_rows)
+    if has_any_rag:
+        print(f"{'#':<3} {'ID':<22} {'SIZE':<7} {'DOWNL':<7} {'RUN':<5} {'FIT':<6} {'RAG':<22} NAME")
+    else:
+        print(f"{'#':<3} {'ID':<22} {'SIZE':<7} {'DOWNL':<7} {'RUN':<5} {'FIT':<6} NAME")
     for r in out_rows:
         size = f"{r['size_gb']} GB" if r['size_gb'] else "-"
         idx = r["index"] if r["index"] is not None else "-"
-        print(f"{idx:<3} {r['id']:<22} {size:<7} {'yes' if r['downloaded'] else 'no':<7} "
-              f"{'yes' if r['running'] else 'no':<5} {r['fit']:<6} {r['name']}")
+        if has_any_rag:
+            rag = r.get("rag_index") or "-"
+            if rag != "-":
+                # Show ~/<basename> if path lives under $HOME, else basename
+                from os.path import basename, expanduser
+                home = expanduser("~")
+                if rag.startswith(home):
+                    rag = "~" + rag[len(home):]
+                if len(rag) > 21:
+                    rag = "…" + rag[-20:]
+            print(f"{idx:<3} {r['id']:<22} {size:<7} {'yes' if r['downloaded'] else 'no':<7} "
+                  f"{'yes' if r['running'] else 'no':<5} {r['fit']:<6} {rag:<22} {r['name']}")
+        else:
+            print(f"{idx:<3} {r['id']:<22} {size:<7} {'yes' if r['downloaded'] else 'no':<7} "
+                  f"{'yes' if r['running'] else 'no':<5} {r['fit']:<6} {r['name']}")
     print()
     print("Tip: `hydra-llm start <#>` and `stop <#>` accept the index numbers above.")
     return 0
@@ -946,6 +989,21 @@ def cmd_create(args):
     entry["base_id"] = base_entry["id"]
     entry["persona_source"] = str(persona_path)
 
+    # --rag-index binds a corpus path to this alias. Soft-warn (don't reject)
+    # if the path doesn't have a .hydra-index/ yet -- the user might be
+    # creating the alias before they've finished indexing.
+    if args.rag_index:
+        rag_path = Path(args.rag_index).expanduser().resolve()
+        entry["rag_index"] = str(rag_path)
+        if "rag-bound" not in tags:
+            tags.append("rag-bound")
+            entry["tags"] = tags
+        if not (rag_path / rag_store_mod.INDEX_DIR_NAME).is_dir():
+            print(f"warning: {rag_path} has no .hydra-index/ yet. "
+                  f"Run `hydra-llm index {rag_path}` before chatting, "
+                  f"or chat will start with retrieval disabled.",
+                  file=sys.stderr)
+
     if not args.json and not args.yes:
         print(f"Will register this entry in {paths.USER_CATALOG}:\n")
         print(f"  id:           {entry['id']}")
@@ -953,6 +1011,8 @@ def cmd_create(args):
         print(f"  base:         {base_entry['id']} (filename: {entry.get('filename')})")
         print(f"  persona:      {persona.name}  (from {persona_path})")
         print(f"  default_port: {entry['default_port']}")
+        if entry.get("rag_index"):
+            print(f"  rag_index:    {entry['rag_index']}")
         if inline_params:
             print(f"  params:       {inline_params}")
         first_line = entry["system_prompt"].splitlines()[0] if entry["system_prompt"] else ""

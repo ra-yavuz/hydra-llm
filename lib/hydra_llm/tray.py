@@ -69,6 +69,7 @@ def cmd_status():
             "status": r["status"] if r else None,
             "fit": fits,
             "recommended_for": m.get("recommended_for", []),
+            "rag_index": m.get("rag_index"),
         })
 
     extras = [r for r in running if r["alias"] not in {m["id"] for m in catalog}]
