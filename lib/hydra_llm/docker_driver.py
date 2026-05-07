@@ -390,8 +390,17 @@ def start_embedder(embedder_entry, cfg=None, port=None):
     pooling = embedder_entry.get("pooling")
     if pooling and pooling != "none":
         cmd += ["--pooling", pooling]
+    # llama-server's default --ubatch-size is 512, which rejects single
+    # documents longer than that. The chunker emits chunks up to ~1500
+    # characters, which can be ~700 tokens for code and well over 512 for
+    # multilingual prose. Bump batch sizes to 2048 (or the embedder's
+    # max_tokens, whichever is smaller).
+    max_tokens = embedder_entry.get("max_tokens") or 0
+    ubatch = 2048
+    if max_tokens and max_tokens < ubatch:
+        ubatch = max_tokens
+    cmd += ["--ubatch-size", str(ubatch), "--batch-size", str(ubatch)]
     # Carry max_tokens into context size if supplied.
-    max_tokens = embedder_entry.get("max_tokens")
     if isinstance(max_tokens, int) and max_tokens > 0:
         cmd += ["--ctx-size", str(max_tokens)]
 
