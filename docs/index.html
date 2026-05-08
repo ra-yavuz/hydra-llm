@@ -136,6 +136,14 @@
 
 <p>When an embedder sidecar fails to start because the GGUF on disk looks corrupt (a partial download, a re-uploaded file with a different SHA, etc.), hydra detects the parse failure in the container logs, deletes the local file, re-downloads from the catalog URL, and retries once. Transparent to the user; no <code>--force</code> flag needed. If the second attempt also fails, the original error bubbles up.</p>
 
+<h2>Autokill: idle models stop themselves</h2>
+
+<p>Loaded chat models hold VRAM and the kernel page cache for the GGUF mmap. Forgetting to <code>hydra-llm stop</code> a model after you are done is the easy mistake. Hydra ships a small user-level systemd timer (<code>hydra-llm-reaper.timer</code>) that wakes once a minute, asks Docker which hydra containers are running, and stops the ones that have been idle longer than <code>chat_idle_ttl_seconds</code> (default: 600s, ten minutes). The timer is enabled automatically the first time <code>hydra-llm setup</code> finishes; manage it explicitly with <code>hydra-llm reaper {status,enable,disable}</code>. Disable autokill entirely by setting <code>chat_idle_ttl_seconds: 0</code> in <code>~/.config/hydra-llm/config.yaml</code>.</p>
+
+<p>"Idle" combines two signals so the autokill works for <code>hydra-llm chat</code> users and external API clients alike: every chat turn refreshes a per-alias touch file, and each reap cycle also samples <code>docker stats</code> and treats any container above <code>reap_cpu_busy_percent</code> (default 1%) as in use. Aider, curl, the Plasma widget, lillycoder, anything sending real requests at the model's port keeps it alive purely by using it. The timer itself is dormant between ticks; one cycle is a <code>docker ps</code>, a <code>docker stats --no-stream</code>, and a few stat() calls. Cost is dominated by docker and stays a small fraction of one core for a couple hundred milliseconds per minute. Run <code>hydra-llm reap</code> to trigger one cycle by hand.</p>
+
+<p>The same TTL mechanism has long applied to embedder sidecars (<code>embedder_idle_ttl_seconds</code>, default 60s); chat-model autokill brings the two surfaces under one timer.</p>
+
 <h2>Where it runs</h2>
 
 <p>hydra-llm targets Linux first (Debian, Ubuntu, Fedora, Arch, etc.) but the architecture is portable wherever Docker runs:</p>
