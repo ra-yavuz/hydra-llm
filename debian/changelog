@@ -1,3 +1,15 @@
+hydra-llm (0.2.9-1) unstable; urgency=low
+
+  * `hydra-llm chat --system <text>` and `--system-file <path>` set
+    a one-off system prompt for the current invocation. The flag
+    wins over `--persona`, per-alias config, and any inline catalog
+    `system_prompt`. To persist a prompt for an alias, use
+    `hydra-llm config <alias> --prompt ...` as before; --system is
+    intentionally per-invocation. `--system-file -` reads stdin.
+    The two flags are mutually exclusive.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Fri, 08 May 2026 10:41:37 +0000
+
 hydra-llm (0.2.8-1) unstable; urgency=low
 
   * Catalog now ships sha256 for every entry. The downloader has

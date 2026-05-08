@@ -279,11 +279,14 @@ def interactive_chat(
     cli_overrides: Optional[dict] = None,
     container_name: Optional[str] = None,
     rag_config=None,  # rag_chat.RagConfig | None
+    cli_system_prompt: Optional[str] = None,
+    cli_system_source: Optional[str] = None,
 ):
     """Interactive REPL.
 
     Resolution order for the system prompt:
-      persona (if given) > per-alias prompt > inline catalog system_prompt > none
+      cli_system_prompt (--system / --system-file) > persona > per-alias
+      prompt > inline catalog system_prompt > none
 
     Resolution order for sampling params:
       cli_overrides > persona settings > per-alias params > inline catalog params > defaults
@@ -312,7 +315,10 @@ def interactive_chat(
             return
 
     # Resolve effective system prompt and params.
-    if persona:
+    if cli_system_prompt is not None:
+        sys_prompt = cli_system_prompt
+        prompt_source = cli_system_source or "--system"
+    elif persona:
         sys_prompt = persona.system_prompt
         prompt_source = f"persona '{persona.name}'"
     else:

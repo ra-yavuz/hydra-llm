@@ -275,6 +275,14 @@ def main():
     p.add_argument("--temperature", type=float)
     p.add_argument("--max-tokens", type=int)
     p.add_argument("--no-thoughts", action="store_true", help="hide reasoning output")
+    # System prompt overrides for this invocation only. Wins over persona,
+    # per-alias prompt, and inline catalog system_prompt. To persist a
+    # prompt for an alias, use `hydra-llm config <alias> --prompt ...`.
+    p.add_argument("--system",
+                   help="system prompt for this session (one-off; overrides persona/config)")
+    p.add_argument("--system-file",
+                   help="read the system prompt from this file ('-' for stdin); "
+                        "mutually exclusive with --system")
     # RAG flags. --rag and --rag-all and --rag-tag are mutually exclusive
     # at runtime; we don't enforce it at parse time so the user can have
     # one in shell history without the parser refusing.
@@ -1966,6 +1974,27 @@ def cmd_chat(args):
 
     rag_config = _build_rag_config(args, entry)
 
+    cli_system_prompt = None
+    cli_system_source = None
+    if args.system and args.system_file:
+        print("error: pass either --system or --system-file, not both",
+              file=sys.stderr)
+        return 1
+    if args.system:
+        cli_system_prompt = args.system
+        cli_system_source = "--system"
+    elif args.system_file:
+        try:
+            if args.system_file == "-":
+                cli_system_prompt = sys.stdin.read()
+                cli_system_source = "--system-file (stdin)"
+            else:
+                cli_system_prompt = Path(args.system_file).expanduser().read_text()
+                cli_system_source = f"--system-file {args.system_file}"
+        except OSError as e:
+            print(f"error: could not read --system-file: {e}", file=sys.stderr)
+            return 1
+
     chat_mod.interactive_chat(
         base_url=base_url,
         persona=persona,
@@ -1977,6 +2006,8 @@ def cmd_chat(args):
         cli_overrides=cli_overrides,
         container_name=container_name,
         rag_config=rag_config,
+        cli_system_prompt=cli_system_prompt,
+        cli_system_source=cli_system_source,
     )
     return 0
 
