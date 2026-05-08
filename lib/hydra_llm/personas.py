@@ -48,8 +48,16 @@ def list_personas():
     return out
 
 
-def load_persona(name_or_path: str) -> Persona:
-    """Loads a persona by name (looks in PERSONAS_DIR) or absolute/relative path."""
+def load_persona(name_or_path: str, *, allow_inline_text: bool = False) -> Persona:
+    """Loads a persona by name (looks in PERSONAS_DIR) or absolute/relative path.
+
+    With `allow_inline_text=True`, a string that doesn't resolve to a file
+    *and* clearly isn't a slug (contains whitespace, looks like prose) is
+    accepted as the system prompt verbatim. This lets users write
+    `hydra-llm chat --persona "Be terse and stay in character"` without
+    creating a file. Slug-shaped strings still raise FileNotFoundError so
+    a typo'd name doesn't silently become a one-word persona.
+    """
     p = Path(name_or_path)
     if not p.is_absolute() and not p.exists():
         # Look in the personas dir.
@@ -59,6 +67,8 @@ def load_persona(name_or_path: str) -> Persona:
                 p = candidate
                 break
         else:
+            if allow_inline_text and _looks_like_inline_prompt(name_or_path):
+                return _persona_from_inline(name_or_path)
             raise FileNotFoundError(f"persona not found: {name_or_path}")
     if not p.is_file():
         raise FileNotFoundError(f"persona file does not exist: {p}")
@@ -81,4 +91,32 @@ def load_persona(name_or_path: str) -> Persona:
         temperature=front_matter.get("temperature"),
         max_tokens=front_matter.get("max_tokens"),
         source=str(p),
+    )
+
+
+def _looks_like_inline_prompt(s: str) -> bool:
+    """Distinguish a typo'd persona slug from intentional inline prompt text.
+
+    Inline prompts almost always contain a space (multiple words) or a
+    sentence-ending mark. A bare slug like 'firendly-tutor' (typo for
+    friendly-tutor) has neither, so we still treat that as a missing
+    file and raise.
+    """
+    s = s.strip()
+    if not s:
+        return False
+    if any(ch.isspace() for ch in s):
+        return True
+    # Single token: only treat as inline if it has prose punctuation or
+    # is unusually long (a slug-style id should be short).
+    if any(ch in s for ch in ".!?,:;"):
+        return True
+    return False
+
+
+def _persona_from_inline(text: str) -> Persona:
+    return Persona(
+        name="inline",
+        system_prompt=text.strip(),
+        source="--persona (inline text)",
     )

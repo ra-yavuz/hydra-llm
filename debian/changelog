@@ -1,3 +1,30 @@
+hydra-llm (0.2.10-1) unstable; urgency=low
+
+  * `hydra-llm chat --new` allocates a fresh session file for the
+    current (cwd, alias) and makes it the default for next time.
+    Old sessions are kept; list them with `hydra-llm session list`.
+    Implementation: a sidecar pointer file
+    `<cwd_hash>-<alias>.current` records which session the next
+    plain `chat <alias>` should resume. Without a pointer, behavior
+    falls back to the legacy single-file shape so pre-0.2.10 sessions
+    keep resuming as before.
+  * `hydra-llm chat --clean` enumerates every session file for the
+    current (cwd, alias), prints them with sizes, asks for
+    confirmation, and removes them (plus the pointer file).
+  * New `hydra-llm session` group: `list`, `show`, `load`, `rm`.
+    `list` defaults to sessions in the current cwd; `--all` shows
+    everything. `load <name-or-path>` switches the per-folder
+    default. `show` dumps the JSON message log in human-readable
+    form. `rm` removes one (with confirmation).
+  * `hydra-llm chat --persona "..."` accepts inline prompt text
+    when the argument doesn't resolve to a persona file. The
+    heuristic (must contain whitespace or sentence punctuation, or
+    be unusually long) keeps a typo'd slug like 'firendly-tutor'
+    from silently becoming a one-word persona. A misspelled slug
+    still raises FileNotFoundError as before.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Fri, 08 May 2026 10:51:23 +0000
+
 hydra-llm (0.2.9-1) unstable; urgency=low
 
   * `hydra-llm chat --system <text>` and `--system-file <path>` set

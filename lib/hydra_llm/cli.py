@@ -283,6 +283,15 @@ def main():
     p.add_argument("--system-file",
                    help="read the system prompt from this file ('-' for stdin); "
                         "mutually exclusive with --system")
+    p.add_argument("--new", action="store_true",
+                   help="start a fresh session file for this folder+model and "
+                        "make it the new default for next time. Other session "
+                        "files for this folder+model are kept; list them with "
+                        "`hydra-llm session list`.")
+    p.add_argument("--clean", action="store_true",
+                   help="delete every session file for this folder+model. "
+                        "Lists what would be removed and asks for confirmation "
+                        "first. Doesn't start a chat.")
     # RAG flags. --rag and --rag-all and --rag-tag are mutually exclusive
     # at runtime; we don't enforce it at parse time so the user can have
     # one in shell history without the parser refusing.
@@ -314,6 +323,47 @@ def main():
     pp.set_defaults(func=cmd_persona_path)
     p_persona.set_defaults(
         func=lambda a: (p_persona.print_help() or sys.exit(1)) if not a.persona_cmd else None,
+    )
+
+    # --- session: manage chat session files --------------------------------
+    p_session = sub.add_parser(
+        "session",
+        help="list, show, switch default, or remove chat session files",
+        description=(
+            "Hydra stores one chat-session JSON per (cwd, alias) by default. "
+            "`hydra-llm chat --new` allocates additional ones. This group "
+            "inspects and manages them.\n\n"
+            "Sessions are per-folder: `list` defaults to the folder you "
+            "run it from. Pass --all to see every session globally."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    s_sub = p_session.add_subparsers(dest="session_cmd")
+
+    sp = s_sub.add_parser("list", help="list session files",
+                          parents=[json_parent])
+    sp.add_argument("alias", nargs="?",
+                    help="optional model alias (defaults to all aliases for this cwd)")
+    sp.add_argument("--all", action="store_true",
+                    help="show every session file globally, not just this cwd")
+    sp.set_defaults(func=cmd_session_list)
+
+    sp = s_sub.add_parser("show", help="dump a session's messages")
+    sp.add_argument("target", help="session basename or path")
+    sp.set_defaults(func=cmd_session_show)
+
+    sp = s_sub.add_parser("load",
+                          help="set a session file as the default for its (cwd, alias)")
+    sp.add_argument("target", help="session basename or path")
+    sp.set_defaults(func=cmd_session_load)
+
+    sp = s_sub.add_parser("rm", help="delete a session file (with confirm)")
+    sp.add_argument("target", help="session basename or path")
+    sp.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    sp.set_defaults(func=cmd_session_rm)
+
+    p_session.set_defaults(
+        func=lambda a: (p_session.print_help() or sys.exit(1)) if not a.session_cmd else None,
     )
 
     # --- rag (retrieval-augmented generation) -------------------------------
@@ -645,6 +695,7 @@ def main():
     # one. Idempotent: the top-level `help` registered above is left alone.
     _attach_help(p_persona)
     _attach_help(p_rag)
+    _attach_help(p_session)
 
     args = parser.parse_args(_expand_help_alias(sys.argv[1:]))
     if not args.cmd:
@@ -682,7 +733,7 @@ def _cmd_help(parser, sub, args):
 # Names of group parsers (those that take a sub-subcommand). Used by
 # _expand_help_alias to decide whether trailing `help` is group-level
 # (handled by _attach_help) or leaf-level (rewrite to --help).
-_HELP_GROUPS = {"hydra-llm", "rag", "persona"}
+_HELP_GROUPS = {"hydra-llm", "rag", "persona", "session"}
 
 
 def _attach_help(group_parser):
@@ -1912,10 +1963,40 @@ def cmd_chat(args):
         print(f"error: unknown catalog id: {alias}", file=sys.stderr)
         return 1
 
+    # --clean is a session-management early-exit. It does NOT start a
+    # model container; it just enumerates the session files for this
+    # (cwd, alias), shows them, and confirms before deleting.
+    if args.clean:
+        files, pointer = chat_mod.clean_sessions_for(alias)
+        if not files and pointer is None:
+            print(f"no session files for {alias} in this folder.")
+            return 0
+        print(f"Files to delete for `{alias}` in {Path.cwd()}:")
+        for f in files:
+            try:
+                size = f.stat().st_size
+            except OSError:
+                size = 0
+            print(f"  {f}  ({size} bytes)")
+        if pointer is not None:
+            print(f"  {pointer}  (pointer)")
+        try:
+            ans = input(f"Remove {len(files)} session file(s)"
+                        f"{' + pointer' if pointer else ''}? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+        if ans not in ("y", "yes"):
+            print("aborted.")
+            return 1
+        removed = chat_mod.perform_clean(files, pointer)
+        print(f"removed {removed} session file(s).")
+        return 0
+
     persona = None
     if args.persona:
         try:
-            persona = personas_mod.load_persona(args.persona)
+            persona = personas_mod.load_persona(args.persona, allow_inline_text=True)
         except FileNotFoundError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
@@ -1962,15 +2043,26 @@ def cmd_chat(args):
             print("error: pass either a session-file positional or --session, not both",
                   file=sys.stderr)
             return 1
+        if args.new:
+            print("warning: --new ignored when an explicit session-file path is given",
+                  file=sys.stderr)
     elif args.session == "default":
         # Default session is per-(cwd, alias) so a chat in folder A does not
-        # bleed into folder B. Centralised location keeps the user's project
-        # dirs clean; the cwd is hashed into the filename.
-        import hashlib
-        cwd = str(Path.cwd().resolve())
-        cwd_key = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:12]
-        session_file = paths.SESSIONS_DIR / f"{cwd_key}-{alias}.json"
+        # bleed into folder B. The pointer file at <key>.current decides
+        # which file is the active default; --new allocates a new one and
+        # promotes it. See chat_mod.resolve_default_session for the
+        # backward-compatibility fallback to the legacy single-file shape.
+        if args.new:
+            session_file = chat_mod.allocate_new_session(alias)
+            chat_mod.set_default_session(alias, session_file)
+            print(f"[new session: {session_file.name} (now the default for this folder)]")
+        else:
+            session_file = chat_mod.resolve_default_session(alias)
         paths.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    elif args.new:
+        # `--new` only makes sense for the auto-default flow. With an
+        # explicit --session NAME the user is already naming the file.
+        print("warning: --new ignored when --session is given", file=sys.stderr)
 
     rag_config = _build_rag_config(args, entry)
 
@@ -2111,6 +2203,160 @@ def cmd_persona_show(args):
 
 def cmd_persona_path(args):
     print(paths.PERSONAS_DIR)
+    return 0
+
+
+# --- session management -------------------------------------------------------
+
+def _resolve_session_target(target: str) -> Path | None:
+    """Turn a user-given basename or path into an absolute session file path.
+
+    Accepts: bare basename ("9dcdeb755e17-smollm2-135m.json"), basename
+    without extension, or an absolute/relative path. Returns None if no
+    matching file exists.
+    """
+    p = Path(target).expanduser()
+    if p.is_absolute() or "/" in target:
+        return p.resolve() if p.exists() else None
+    cand = paths.SESSIONS_DIR / target
+    if cand.is_file():
+        return cand
+    cand_json = paths.SESSIONS_DIR / f"{target}.json"
+    if cand_json.is_file():
+        return cand_json
+    return None
+
+
+def cmd_session_list(args):
+    paths.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    if args.all:
+        files = sorted(paths.SESSIONS_DIR.glob("*.json"))
+        scope_label = "all sessions"
+    elif args.alias:
+        # Resolve alias (allow numeric index too).
+        cfg = cfg_mod.load_user_config()
+        alias, err = _resolve_alias_or_index(args.alias, cfg)
+        if err:
+            print(f"error: {err}", file=sys.stderr)
+            return 1
+        files = chat_mod.list_sessions_for(alias)
+        scope_label = f"sessions for {alias} in {Path.cwd()}"
+    else:
+        # All sessions for this cwd, any alias.
+        import hashlib
+        cwd = str(Path.cwd().resolve())
+        cwd_key = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:12]
+        files = sorted(paths.SESSIONS_DIR.glob(f"{cwd_key}-*.json"))
+        scope_label = f"sessions in {Path.cwd()}"
+
+    rows = []
+    for f in files:
+        try:
+            st = f.stat()
+            rows.append({
+                "path": str(f),
+                "name": f.name,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+            })
+        except OSError:
+            continue
+    if args.json:
+        print(json.dumps({"ok": True, "sessions": rows, "scope": scope_label}, indent=2))
+        return 0
+    if not rows:
+        print(f"no sessions ({scope_label}).")
+        return 0
+    print(f"{scope_label}:")
+    print(f"  {'NAME':<55}  {'SIZE':>8}  MODIFIED")
+    import time as _t
+    for r in rows:
+        when = _t.strftime("%Y-%m-%d %H:%M", _t.localtime(r["mtime"]))
+        print(f"  {r['name']:<55}  {r['size']:>8}  {when}")
+    return 0
+
+
+def cmd_session_show(args):
+    target = _resolve_session_target(args.target)
+    if not target:
+        print(f"error: session not found: {args.target}", file=sys.stderr)
+        return 1
+    try:
+        with open(target) as f:
+            messages = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"error: could not read {target}: {e}", file=sys.stderr)
+        return 1
+    print(f"# {target}")
+    print(f"# {len(messages)} messages")
+    print()
+    for m in messages:
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        print(f"--- {role} ---")
+        print(content)
+        print()
+    return 0
+
+
+def cmd_session_load(args):
+    """Mark a session as the active default for its (cwd, alias).
+
+    Infers the alias from the session filename (`<cwd_hash>-<alias>.json`
+    or `<cwd_hash>-<alias>-N.json`). Refuses to load a session whose cwd
+    hash doesn't match the current cwd, because the pointer file is
+    cwd-scoped (loading a session from another folder wouldn't survive
+    the next plain `chat <alias>` call from that folder anyway).
+    """
+    target = _resolve_session_target(args.target)
+    if not target:
+        print(f"error: session not found: {args.target}", file=sys.stderr)
+        return 1
+    import hashlib
+    import re as _re
+    cwd = str(Path.cwd().resolve())
+    cwd_key = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:12]
+    m = _re.match(rf"^{_re.escape(cwd_key)}-(?P<alias>.+?)(?:-\d+)?\.json$", target.name)
+    if not m:
+        print(f"error: {target.name} is not a session for the current folder. "
+              f"Pointer files are per-folder; load it from the folder it "
+              f"was created in, or use `hydra-llm chat <alias> {target}` "
+              f"as a one-off explicit session-file.", file=sys.stderr)
+        return 1
+    alias = m.group("alias")
+    chat_mod.set_default_session(alias, target)
+    print(f"default session for `{alias}` in this folder is now {target.name}.")
+    return 0
+
+
+def cmd_session_rm(args):
+    target = _resolve_session_target(args.target)
+    if not target:
+        print(f"error: session not found: {args.target}", file=sys.stderr)
+        return 1
+    if not args.yes:
+        try:
+            ans = input(f"Remove {target}? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+        if ans not in ("y", "yes"):
+            print("aborted.")
+            return 1
+    try:
+        target.unlink()
+    except OSError as e:
+        print(f"error: could not remove {target}: {e}", file=sys.stderr)
+        return 1
+    # Also clear any pointer that still names it.
+    parent = target.parent
+    for pointer in parent.glob("*.current"):
+        try:
+            if pointer.read_text().strip() == target.name:
+                pointer.unlink()
+        except OSError:
+            pass
+    print(f"removed {target}.")
     return 0
 
 

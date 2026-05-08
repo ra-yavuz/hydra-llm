@@ -67,6 +67,116 @@ def save_session(name: str, messages):
     save_session_to(session_path(name), messages)
 
 
+# --- per-(cwd, alias) auto-default session machinery -------------------------
+#
+# Layout under SESSIONS_DIR:
+#   <cwd_hash>-<alias>.json            legacy single auto-default
+#   <cwd_hash>-<alias>-N.json          additional fresh sessions from --new
+#   <cwd_hash>-<alias>.current         pointer (one line: basename of active)
+#
+# The pointer wins over the legacy single file when it exists. Without a
+# pointer, default resume picks <cwd_hash>-<alias>.json so behavior pre
+# v0.2.10 keeps working unchanged.
+
+def _cwd_alias_key(alias: str) -> str:
+    """sha1(cwd)[:12] + alias prefix used to namespace per-folder sessions."""
+    import hashlib
+    cwd = str(Path.cwd().resolve())
+    cwd_key = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:12]
+    return f"{cwd_key}-{alias}"
+
+
+def _pointer_path(alias: str) -> Path:
+    return paths.SESSIONS_DIR / f"{_cwd_alias_key(alias)}.current"
+
+
+def _legacy_default_path(alias: str) -> Path:
+    return paths.SESSIONS_DIR / f"{_cwd_alias_key(alias)}.json"
+
+
+def list_sessions_for(alias: str) -> list[Path]:
+    """Every session file for the current (cwd, alias). Sorted, files only."""
+    paths.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    key = _cwd_alias_key(alias)
+    out = []
+    for p in sorted(paths.SESSIONS_DIR.glob(f"{key}.json")):
+        out.append(p)
+    for p in sorted(paths.SESSIONS_DIR.glob(f"{key}-*.json")):
+        out.append(p)
+    return out
+
+
+def resolve_default_session(alias: str) -> Path:
+    """The session file `hydra-llm chat <alias>` should resume by default.
+
+    Honors the per-(cwd, alias) pointer file if present and pointing at a
+    file that exists. Falls back to the legacy <cwd_hash>-<alias>.json so
+    older sessions just keep working.
+    """
+    pointer = _pointer_path(alias)
+    if pointer.is_file():
+        try:
+            target_name = pointer.read_text().strip()
+            if target_name:
+                target = paths.SESSIONS_DIR / target_name
+                if target.is_file():
+                    return target
+        except OSError:
+            pass
+    return _legacy_default_path(alias)
+
+
+def set_default_session(alias: str, target: Path) -> None:
+    """Write the pointer file so the next plain `chat <alias>` resumes `target`."""
+    pointer = _pointer_path(alias)
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(target.name + "\n")
+
+
+def allocate_new_session(alias: str) -> Path:
+    """Pick the next free <cwd_hash>-<alias>-N.json filename (N >= 1).
+
+    Doesn't create the file (interactive_chat will write it on first turn).
+    Doesn't update the pointer (caller decides when --new should also
+    promote the new file to default; cmd_chat does so unconditionally).
+    """
+    key = _cwd_alias_key(alias)
+    paths.SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        candidate = paths.SESSIONS_DIR / f"{key}-{n}.json"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+def clean_sessions_for(alias: str) -> tuple[list[Path], Path | None]:
+    """Return (session_files, pointer_path_if_present) without deleting.
+
+    Caller is expected to confirm with the user, then call
+    `_perform_clean(...)` (or unlink directly).
+    """
+    files = list_sessions_for(alias)
+    pointer = _pointer_path(alias)
+    return files, (pointer if pointer.is_file() else None)
+
+
+def perform_clean(files: list[Path], pointer: Path | None) -> int:
+    removed = 0
+    for f in files:
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:
+            pass
+    if pointer is not None:
+        try:
+            pointer.unlink()
+        except OSError:
+            pass
+    return removed
+
+
 def _spinner(stop_evt: threading.Event, prefix: str):
     """Tiny braille spinner shown while waiting for the model's first token."""
     if not _supports_color():
