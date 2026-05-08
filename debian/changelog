@@ -1,3 +1,22 @@
+hydra-llm (0.2.8-1) unstable; urgency=low
+
+  * Catalog now ships sha256 for every entry. The downloader has
+    verified-on-download since v0.2.6, but the field was empty in
+    catalog/catalog.yaml and catalog/embedders.yaml so the check
+    was a no-op in practice. Backfilled via Hugging Face's tree API
+    (the `lfs.oid` field on every LFS-stored GGUF *is* sha256 by
+    spec), so no bandwidth was spent computing hashes from local
+    downloads. From now on, a corrupt or partial download fails
+    loudly during `hydra-llm download` instead of silently
+    producing a broken local model that crashes at first load.
+  * `scripts/sha256-backfill.py` learned the HF API mode. The
+    streaming-download mode is still there as `--full-download`
+    for non-HF URLs; it's just no longer the default.
+  * Roadmap pruned: the Plasma RAG widget tab item is gone (won't
+    do), and the SHA backfill item is gone (shipped).
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Fri, 08 May 2026 10:32:10 +0000
+
 hydra-llm (0.2.7-1) unstable; urgency=low
 
   * Fix regression in v0.2.6 where `hydra-llm chat` could fail to

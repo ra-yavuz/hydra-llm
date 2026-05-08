@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
 """Compute and write sha256 fields into the shipped catalogs.
 
-Walks catalog/catalog.yaml and catalog/embedders.yaml, downloads each
-referenced URL once (streaming, no full-file copy unless asked), computes
-the sha256, and writes the value back into the YAML next to the existing
-`url`. Idempotent: entries that already have a sha256 are skipped unless
-`--force` is given.
+Walks catalog/catalog.yaml and catalog/embedders.yaml and writes a
+sha256 next to every `url:` that doesn't have one yet. Idempotent:
+entries already populated are skipped unless `--force` is given.
+
+Two modes for getting the hash:
+
+  HF API (default, fast, no bandwidth)
+    For URLs of the form
+    `https://huggingface.co/<owner>/<repo>/resolve/<ref>/<filename>`,
+    fetch `https://huggingface.co/api/models/<owner>/<repo>/tree/<ref>`
+    and take the `lfs.oid` of the matching path. HF's LFS oid is
+    sha256 by spec, so this returns the exact hash hydra needs without
+    downloading the GGUF.
+
+  Streaming download (fallback, opt-in via --full-download)
+    For URLs the HF API can't answer (mirror redirects, GitHub release
+    artifacts, etc.), stream the file once and hash on the fly. Slow
+    on a typical home connection.
 
 Why this exists: the downloader already verifies sha256 if the catalog
 provides one (lib/hydra_llm/downloader.py). Without that field, a
@@ -13,11 +26,12 @@ corrupt/incomplete download silently produces a broken local model. This
 script populates the field once so future downloads fail loudly.
 
 Usage:
-    scripts/sha256-backfill.py                # both catalogs, missing only
-    scripts/sha256-backfill.py --force        # recompute even if present
-    scripts/sha256-backfill.py --only catalog # just chat catalog
+    scripts/sha256-backfill.py                  # HF API for HF URLs, skip the rest
+    scripts/sha256-backfill.py --force          # recompute even if present
+    scripts/sha256-backfill.py --only catalog   # just chat catalog
     scripts/sha256-backfill.py --only embedders
-    scripts/sha256-backfill.py --dry-run      # print, don't write
+    scripts/sha256-backfill.py --dry-run        # print, don't write
+    scripts/sha256-backfill.py --full-download  # also stream-hash non-HF URLs
 """
 from __future__ import annotations
 
@@ -33,6 +47,62 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 CHAT_CATALOG = REPO / "catalog" / "catalog.yaml"
 EMBED_CATALOG = REPO / "catalog" / "embedders.yaml"
+
+
+_HF_URL = re.compile(
+    r"^https://huggingface\.co/(?P<repo>[^/]+/[^/]+)/resolve/(?P<ref>[^/]+)/(?P<path>.+)$"
+)
+
+
+def hf_lookup_sha256(url: str, *, cache: dict[str, dict] | None = None) -> str | None:
+    """Resolve sha256 for a Hugging Face `resolve/<ref>` URL via the tree API.
+
+    Returns the sha256 hex string, or None if the URL isn't a recognizable
+    HF resolve URL or the file isn't LFS-stored (rare for GGUFs but
+    possible for tiny configs).
+
+    `cache` is an optional dict keyed on (repo, ref) to avoid re-fetching
+    the same tree for every quant variant of the same repo.
+    """
+    m = _HF_URL.match(url)
+    if not m:
+        return None
+    repo = m.group("repo")
+    ref = m.group("ref")
+    path = m.group("path")
+    key = f"{repo}@{ref}"
+    if cache is not None and key in cache:
+        tree = cache[key]
+    else:
+        api = f"https://huggingface.co/api/models/{repo}/tree/{ref}?recursive=true"
+        headers = {"User-Agent": "hydra-llm-sha-backfill/2"}
+        token = os.environ.get("HF_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(api, headers=headers)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = resp.read()
+        except (urllib.error.HTTPError, urllib.error.URLError):
+            return None
+        try:
+            entries = __import__("json").loads(data.decode("utf-8"))
+        except ValueError:
+            return None
+        # Index by path so multiple quant variants in the same repo only
+        # cost one API call.
+        tree = {e.get("path"): e for e in entries if isinstance(e, dict)}
+        if cache is not None:
+            cache[key] = tree
+    entry = tree.get(path)
+    if not entry:
+        return None
+    lfs = entry.get("lfs") or {}
+    oid = lfs.get("oid")
+    # HF's lfs.oid is sha256 hex by Git LFS spec. Sanity-check the shape.
+    if isinstance(oid, str) and len(oid) == 64 and all(c in "0123456789abcdef" for c in oid.lower()):
+        return oid.lower()
+    return None
 
 
 def stream_sha256(url: str, *, chunk: int = 1 << 20) -> tuple[str, int]:
@@ -139,6 +209,10 @@ def main():
                     help="restrict to one catalog file")
     ap.add_argument("--dry-run", action="store_true",
                     help="print what would change without writing the YAML")
+    ap.add_argument("--full-download", action="store_true",
+                    help="also stream-hash URLs the HF API can't answer "
+                         "(slow; uses your bandwidth). Without this, non-HF "
+                         "URLs are listed as skipped and left without sha256.")
     args = ap.parse_args()
 
     targets: list[Path] = []
@@ -162,15 +236,24 @@ def main():
             print(f"  nothing to do ({len(url_to_sha)} entries already populated)")
             continue
         updates: dict[str, str] = {}
+        hf_cache: dict[str, dict] = {}
         for i, url in enumerate(todo, 1):
             print(f"  [{i}/{len(todo)}] {url[:90]}{'...' if len(url) > 90 else ''}")
+            sha = hf_lookup_sha256(url, cache=hf_cache)
+            if sha:
+                print(f"    {sha}  (via HF API)")
+                updates[url] = sha
+                continue
+            if not args.full_download:
+                print("    SKIPPED: HF API didn't resolve, --full-download not given")
+                continue
             try:
                 sha, size = stream_sha256(url)
             except (urllib.error.HTTPError, urllib.error.URLError) as e:
                 print(f"    FAILED: {e}", file=sys.stderr)
                 rc = 1
                 continue
-            print(f"    {sha}  ({size / 1024 / 1024:.0f} MiB)")
+            print(f"    {sha}  ({size / 1024 / 1024:.0f} MiB, streamed)")
             updates[url] = sha
         if updates:
             n = patch_yaml_inplace(path, updates, args.dry_run)

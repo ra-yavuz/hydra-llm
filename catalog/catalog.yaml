@@ -32,6 +32,7 @@ models:
     name: "SmolLM2 135M Instruct (Q4_K_M)"
     filename: SmolLM2-135M-Instruct-Q4_K_M.gguf
     url: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf
+    sha256: 2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d
     size_gb: 0.10
     needs_ram_gb: 1
     fits_in_vram_gb: 1
@@ -47,6 +48,7 @@ models:
     name: "SmolLM2 360M Instruct (Q4_K_M)"
     filename: SmolLM2-360M-Instruct-Q4_K_M.gguf
     url: https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf
+    sha256: 2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2
     size_gb: 0.26
     needs_ram_gb: 2
     fits_in_vram_gb: 1
@@ -61,6 +63,7 @@ models:
     name: "Qwen2.5 0.5B Instruct (Q4_K_M)"
     filename: Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
     url: https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+    sha256: 6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653
     size_gb: 0.38
     needs_ram_gb: 2
     fits_in_vram_gb: 1
@@ -75,6 +78,7 @@ models:
     name: "Gemma 2 2B Instruct (Q4_K_M)"
     filename: gemma-2-2b-it-Q4_K_M.gguf
     url: https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf
+    sha256: e0aee85060f168f0f2d8473d7ea41ce2f3230c1bc1374847505ea599288a7787
     size_gb: 1.59
     needs_ram_gb: 4
     fits_in_vram_gb: 3
@@ -89,6 +93,7 @@ models:
     name: "Phi-3.5 mini Instruct (Q4_K_M)"
     filename: Phi-3.5-mini-instruct.Q4_K_M.gguf
     url: https://huggingface.co/QuantFactory/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct.Q4_K_M.gguf
+    sha256: 3ef532675b6684b28e0a1a0dca8b3bf4132673bf2294b7d87b41b1d64bb03bca
     size_gb: 2.23
     needs_ram_gb: 6
     fits_in_vram_gb: 4
@@ -104,6 +109,7 @@ models:
     name: "Mistral 7B Instruct v0.3 (Q4_K_M)"
     filename: Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
     url: https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
+    sha256: 1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6
     size_gb: 4.07
     needs_ram_gb: 8
     fits_in_vram_gb: 6
@@ -118,6 +124,7 @@ models:
     name: "Qwen2.5 7B Instruct (Q4_K_M)"
     filename: Qwen2.5-7B-Instruct-Q4_K_M.gguf
     url: https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+    sha256: 65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423
     size_gb: 4.36
     needs_ram_gb: 8
     fits_in_vram_gb: 6
@@ -132,6 +139,7 @@ models:
     name: "Llama 3.1 8B Instruct (Q4_K_M)"
     filename: Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf
     url: https://huggingface.co/QuantFactory/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf
+    sha256: 6d86fb9d2910178f5c744234fdf91910e033ef7b03c5e23dcc6d25e98687e5fa
     size_gb: 4.58
     needs_ram_gb: 10
     fits_in_vram_gb: 7
@@ -147,6 +155,7 @@ models:
     name: "Gemma 2 27B Instruct (Q4_K_M)"
     filename: gemma-2-27b-it-Q4_K_M.gguf
     url: https://huggingface.co/bartowski/gemma-2-27b-it-GGUF/resolve/main/gemma-2-27b-it-Q4_K_M.gguf
+    sha256: 503a87ab47c9e7fb27545ec8592b4dc4493538bd47b397ceb3197e10a0370d23
     size_gb: 15.50
     needs_ram_gb: 24
     fits_in_vram_gb: 18
@@ -161,6 +170,7 @@ models:
     name: "Qwen2.5 32B Instruct (Q4_K_M)"
     filename: Qwen2.5-32B-Instruct-Q4_K_M.gguf
     url: https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q4_K_M.gguf
+    sha256: 2e5f6daea180dbc59f65a40641e94d3973b5dbaa32b3c0acf54647fa874e519e
     size_gb: 18.49
     needs_ram_gb: 28
     fits_in_vram_gb: 22
@@ -176,6 +186,7 @@ models:
     name: "Llama 3.3 70B Instruct (Q4_K_M)"
     filename: Llama-3.3-70B-Instruct.Q4_K_M.gguf
     url: https://huggingface.co/mradermacher/Llama-3.3-70B-Instruct-GGUF/resolve/main/Llama-3.3-70B-Instruct.Q4_K_M.gguf
+    sha256: fc24c4afe3dd3b9449f3e784f02a7a6ad6300eca901134aa7c732c36ccd4dd01
     size_gb: 39.60
     needs_ram_gb: 56
     fits_in_vram_gb: 44

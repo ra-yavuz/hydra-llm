@@ -7,22 +7,6 @@ real friction they remove for the user.
 
 ## Open
 
-### Plasma widget surfaces RAG state
-
-The Plasma widget currently shows chat-model rows. It does not show
-indexed folders, embedder running state, or RAG-bound bundles
-(despite tray.py already exposing `rag_index` per row). A "RAG" tab
-or section in the popup would let users:
-
-- See which folders they have indexed
-- One-click reindex
-- See which embedder containers are running
-- Stop them with one click
-
-Out of scope for the current code-side releases because the tray-side
-data is already exposed; this is purely a QML/UI add. Worth doing once
-the Plasma 6 surface gets another pass.
-
 ### MCP server for direct integration with Claude Code et al
 
 Most LLM coding agents (Claude Code, Aider, Continue.dev, ...) speak MCP
@@ -35,13 +19,6 @@ sketched at `~/github-ra-yavuz/claude-rag-hook/DESIGN.md`. Decide
 whether to build the MCP surface inside hydra-llm or keep the two
 projects separate before committing to either.
 
-### SHA256 backfill of the catalogs
-
-The downloader honors `sha256` on every catalog entry (see v0.2.6) and
-the backfill script `scripts/sha256-backfill.py` is in place. The
-field still has to be populated by running the script once, reviewing
-the diff, and committing it. Deferred from v0.2.6 because it's a
-one-shot data-entry operation, not a code change.
 
 ## On "single embeddings DB with buckets per folder"
 

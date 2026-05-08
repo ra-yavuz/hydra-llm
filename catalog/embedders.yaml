@@ -44,6 +44,7 @@ embedders:
     document_prefix: "search_document: "
     filename: nomic-embed-text-v1.5.Q4_K_M.gguf
     url: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf
+    sha256: d4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac
     size_gb: 0.084
     needs_ram_gb: 1
     fits_in_vram_gb: 0.5
@@ -70,6 +71,7 @@ embedders:
     document_prefix: ""
     filename: Qwen3-Embedding-0.6B-Q8_0.gguf
     url: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf
+    sha256: 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439
     size_gb: 0.639
     needs_ram_gb: 2
     fits_in_vram_gb: 1
@@ -96,6 +98,7 @@ embedders:
     document_prefix: ""
     filename: Qwen3-Embedding-4B-Q4_K_M.gguf
     url: https://huggingface.co/Qwen/Qwen3-Embedding-4B-GGUF/resolve/main/Qwen3-Embedding-4B-Q4_K_M.gguf
+    sha256: 2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b
     size_gb: 2.5
     needs_ram_gb: 4
     fits_in_vram_gb: 3
@@ -121,6 +124,7 @@ embedders:
     document_prefix: ""
     filename: Qwen3-Embedding-8B-Q4_K_M.gguf
     url: https://huggingface.co/Qwen/Qwen3-Embedding-8B-GGUF/resolve/main/Qwen3-Embedding-8B-Q4_K_M.gguf
+    sha256: 3fcd3febec8b3fd64435204db75bf0dd73b91e8d0661e0331acfe7e7c3120b85
     size_gb: 4.68
     needs_ram_gb: 6
     fits_in_vram_gb: 5
@@ -148,6 +152,7 @@ embedders:
     document_prefix: ""
     filename: bge-m3-Q4_K_M.gguf
     url: https://huggingface.co/lm-kit/bge-m3-gguf/resolve/main/bge-m3-Q4_K_M.gguf
+    sha256: e251234fcb7d050991a6be491952f485bf5c641dd10c3272dc1301fd281ad50f
     size_gb: 0.438
     needs_ram_gb: 2
     fits_in_vram_gb: 1
@@ -175,6 +180,7 @@ embedders:
     document_prefix: ""
     filename: nomic-embed-code.Q4_K_M.gguf
     url: https://huggingface.co/nomic-ai/nomic-embed-code-GGUF/resolve/main/nomic-embed-code.Q4_K_M.gguf
+    sha256: 4354a73ee9ff5d811efe552a515dfd518667ff25fdfc4ee9e10af3f617f96eec
     size_gb: 4.38
     needs_ram_gb: 6
     fits_in_vram_gb: 5
