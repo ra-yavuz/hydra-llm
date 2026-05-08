@@ -117,6 +117,10 @@ def main():
                    help="symlink the file into models_dir if it lives elsewhere")
     p.add_argument("--replace", action="store_true",
                    help="overwrite an existing user-catalog entry with the same id")
+    p.add_argument("--prefix",
+                   help="prepend this slug to every derived id (folder-mode and "
+                        "single-file when --id is not given), useful for grouping "
+                        "long Hugging-Face filenames into readable ids")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p.set_defaults(func=cmd_addlocal)
 
@@ -281,6 +285,8 @@ def main():
                    help="retrieve from stores with this tag (repeatable, federated)")
     p.add_argument("--rag-stores", default="",
                    help="comma-separated list of store paths to retrieve from")
+    p.add_argument("--rag-collection",
+                   help="name of a saved collection (see `hydra-llm rag collections`)")
     p.add_argument("--rag-top-k", type=int, default=3, help="how many chunks to attach per turn")
     p.add_argument("--rag-code-only", action="store_true")
     p.add_argument("--rag-prose-only", action="store_true")
@@ -290,15 +296,17 @@ def main():
                    help="explicitly disable RAG, even if the catalog entry has rag_index set")
     p.set_defaults(func=cmd_chat)
 
-    p = sub.add_parser("persona", help="manage personas")
-    p_sub = p.add_subparsers(dest="persona_cmd")
+    p_persona = sub.add_parser("persona", help="manage personas")
+    p_sub = p_persona.add_subparsers(dest="persona_cmd")
     p_sub.add_parser("list", help="list personas").set_defaults(func=cmd_persona_list)
     pp = p_sub.add_parser("show", help="show a persona's contents")
     pp.add_argument("name")
     pp.set_defaults(func=cmd_persona_show)
     pp = p_sub.add_parser("path", help="print the personas directory")
     pp.set_defaults(func=cmd_persona_path)
-    p.set_defaults(func=lambda a: (p.print_help() or sys.exit(1)) if not a.persona_cmd else None)
+    p_persona.set_defaults(
+        func=lambda a: (p_persona.print_help() or sys.exit(1)) if not a.persona_cmd else None,
+    )
 
     # --- rag (retrieval-augmented generation) -------------------------------
     p_rag = sub.add_parser(
@@ -309,11 +317,19 @@ def main():
             "produce fixed-size vectors and run via `llama-server "
             "--embeddings`. Use `hydra-llm rag setup` for first-run, "
             "`hydra-llm index <path>` to index a folder, and "
-            "`hydra-llm chat <alias> --rag <path>` to chat with retrieval."
+            "`hydra-llm chat <alias> --rag <path>` to chat with retrieval.\n\n"
+            "Run `hydra-llm rag explain` for a primer on how RAG works "
+            "and how to retrieve across folders."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     rag_sub = p_rag.add_subparsers(dest="rag_cmd")
+
+    pp = rag_sub.add_parser(
+        "explain",
+        help="primer on how RAG works in hydra-llm and how to retrieve across folders",
+    )
+    pp.set_defaults(func=cmd_rag_explain)
 
     pp = rag_sub.add_parser(
         "list-online", help="list available embedders, filtered to your hardware",
@@ -356,9 +372,23 @@ def main():
     pp = rag_sub.add_parser(
         "stores", help="list folders that have been indexed",
         parents=[json_parent],
+        description=(
+            "List or mutate the registry of indexed folders.\n\n"
+            "With no arguments: list all registered stores with chunk\n"
+            "counts, tags, and embedder ids.\n\n"
+            "Tag mutation: pass --path with --tag-add and/or --tag-remove\n"
+            "to retag an existing store without reindexing it."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pp.add_argument("--prune", action="store_true",
                     help="drop registry entries whose folder no longer exists")
+    pp.add_argument("--path",
+                    help="path of the store to mutate (use with --tag-add / --tag-remove)")
+    pp.add_argument("--tag-add", action="append", default=[], dest="tag_add",
+                    help="add a tag to the --path store (repeatable)")
+    pp.add_argument("--tag-remove", action="append", default=[], dest="tag_remove",
+                    help="remove a tag from the --path store (repeatable)")
     pp.set_defaults(func=cmd_rag_stores)
 
     pp = rag_sub.add_parser(
@@ -421,6 +451,38 @@ def main():
                     help="overwrite an existing user-catalog entry with the same id")
     pp.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     pp.set_defaults(func=cmd_rag_addlocal)
+
+    pp = rag_sub.add_parser(
+        "collections",
+        help="manage saved store collections (named federations)",
+        description=(
+            "A collection is a named set of indexed-folder paths and/or "
+            "tags. Reference it from chat/query with --rag-collection NAME "
+            "instead of repeating --rag-stores or --rag-tag every time."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pp_sub = pp.add_subparsers(dest="collections_cmd")
+    sp = pp_sub.add_parser("list", help="list saved collections", parents=[json_parent])
+    sp.set_defaults(func=cmd_rag_collections_list)
+    sp = pp_sub.add_parser("save", help="create or replace a collection",
+                           parents=[json_parent])
+    sp.add_argument("name")
+    sp.add_argument("--path", action="append", default=[],
+                    help="indexed folder to include (repeatable)")
+    sp.add_argument("--tag", action="append", default=[],
+                    help="tag to include (repeatable)")
+    sp.set_defaults(func=cmd_rag_collections_save)
+    sp = pp_sub.add_parser("delete", help="delete a collection")
+    sp.add_argument("name")
+    sp.set_defaults(func=cmd_rag_collections_delete)
+    sp = pp_sub.add_parser("show", help="show a collection's paths and tags",
+                           parents=[json_parent])
+    sp.add_argument("name")
+    sp.set_defaults(func=cmd_rag_collections_show)
+    pp.set_defaults(func=lambda a: (pp.print_help() or sys.exit(1))
+                    if not a.collections_cmd else None)
+    _attach_help(pp)
 
     pp = rag_sub.add_parser(
         "stop", help="stop a specific embedder sidecar",
@@ -509,6 +571,8 @@ def main():
                    help="search only stores with this tag (repeatable). Implies federated.")
     p.add_argument("--all", action="store_true",
                    help="explicitly federate across every registered store")
+    p.add_argument("--rag-collection",
+                   help="name of a saved collection (see `hydra-llm rag collections`)")
     p.add_argument("--top-k", type=int, default=5, help="how many results to return")
     p.add_argument("--code-only", action="store_true", help="search only the code index")
     p.add_argument("--prose-only", action="store_true", help="search only the prose index")
@@ -569,11 +633,27 @@ def main():
     p.add_argument("topic", nargs="?", help="subcommand name (e.g. 'start', 'download')")
     p.set_defaults(func=lambda a: _cmd_help(parser, sub, a))
 
-    args = parser.parse_args()
+    # Attach a `help` subverb to every group parser that doesn't already have
+    # one. Idempotent: the top-level `help` registered above is left alone.
+    _attach_help(p_persona)
+    _attach_help(p_rag)
+
+    args = parser.parse_args(_expand_help_alias(sys.argv[1:]))
     if not args.cmd:
         parser.print_help()
         sys.exit(0)
     paths.ensure_user_dirs()
+    # Reap embedder sidecars idle longer than embedder_idle_ttl_seconds.
+    # Cheap (one `docker ps` + a few stat() calls), fail-soft, and only
+    # runs when an embed call has actually happened in the past (touch
+    # files exist). Skipped during `rag` subcommands so a user who
+    # wants to keep an embedder up for inspection isn't fighting us.
+    if args.cmd not in ("rag", "tray"):
+        try:
+            from . import embedding as _emb_mod
+            _emb_mod.reap_idle_embedders()
+        except Exception:
+            pass
     sys.exit(args.func(args) or 0)
 
 
@@ -591,15 +671,70 @@ def _cmd_help(parser, sub, args):
     return 0
 
 
+# Names of group parsers (those that take a sub-subcommand). Used by
+# _expand_help_alias to decide whether trailing `help` is group-level
+# (handled by _attach_help) or leaf-level (rewrite to --help).
+_HELP_GROUPS = {"hydra-llm", "rag", "persona"}
+
+
+def _attach_help(group_parser):
+    """Register a `help [topic]` subverb on a parser that has subparsers.
+
+    `hydra-llm rag help`           -> prints rag's own help
+    `hydra-llm rag help download`  -> prints `rag download`'s help
+
+    Idempotent. Does nothing if the parser has no subparsers, or if a
+    `help` subverb is already registered.
+    """
+    sp = next((a for a in group_parser._actions
+               if isinstance(a, argparse._SubParsersAction)), None)
+    if sp is None or "help" in sp.choices:
+        return
+    h = sp.add_parser("help", help=f"show help for `{group_parser.prog}` or a sub-subcommand")
+    h.add_argument("topic", nargs="?", help="sub-subcommand name (optional)")
+
+    def _run(a, _parser=group_parser, _sp=sp):
+        topic = getattr(a, "topic", None)
+        if not topic:
+            _parser.print_help()
+            return 0
+        if topic not in _sp.choices:
+            print(f"{_parser.prog}: unknown subcommand '{topic}'", file=sys.stderr)
+            available = ", ".join(sorted(c for c in _sp.choices if c != "help"))
+            print(f"available: {available}", file=sys.stderr)
+            return 2
+        _sp.choices[topic].print_help()
+        return 0
+    h.set_defaults(func=_run)
+
+
+def _expand_help_alias(argv):
+    """Rewrite trailing `help` to `--help` for leaf parsers.
+
+    `hydra-llm chat help`       -> `hydra-llm chat --help`
+    `hydra-llm rag setup help`  -> `hydra-llm rag setup --help`
+
+    Group-level `help` (`hydra-llm rag help`, `hydra-llm persona help`,
+    `hydra-llm help`) is left intact so the real `help` subparser
+    registered by `_attach_help` handles it (and accepts an optional
+    sub-subcommand topic).
+    """
+    if len(argv) >= 2 and argv[-1] == "help" and argv[-2] not in _HELP_GROUPS:
+        return argv[:-1] + ["--help"]
+    return argv
+
+
 # --- doctor ------------------------------------------------------------------
 
 def cmd_doctor(args):
     snap = hardware.system_snapshot()
     tier = hardware.detect_tier(snap)
     de = desktop.detect()
+    engine_images = docker_driver.engine_image_info()
     if args.json:
         print(json.dumps({"hardware": snap, "tier": tier["id"], "tier_name": tier["name"],
-                          "desktop": de},
+                          "desktop": de,
+                          "engine_images": engine_images},
                          default=str, indent=2))
         return 0
     cpu = snap["cpu"]
@@ -622,6 +757,17 @@ def cmd_doctor(args):
     if de.get("widget_package") and not desktop.is_widget_installed(de["widget_package"]):
         print(f"         Install the panel widget:  sudo apt install {de['widget_package']}")
     print()
+    if engine_images:
+        print("Engine:")
+        for img in engine_images:
+            ref = img.get("llama_cpp_ref") or "(unknown ref; pre-v0.2.5 image)"
+            print(f"  {img['image']}  built {img['created']}  size {img['size']}")
+            print(f"    llama.cpp ref: {ref}")
+        print()
+    else:
+        print("Engine: no hydra-llm/llama-server image found.")
+        print("        Run `hydra-llm setup` to build it.")
+        print()
     print("Recommended next step:  hydra-llm list-online")
     return 0
 
@@ -999,6 +1145,8 @@ def _addlocal_folder(args, folder: Path, cfg: dict) -> int:
             continue
         on_disk_filename = path.name
         alias = _slug_from_filename(path.stem)
+        if getattr(args, "prefix", None):
+            alias = f"{_slug_from_filename(args.prefix)}-{alias}"
         # If alias collides with a planned entry, suffix with -2, -3 etc.
         existing_ids = {p["id"] for p in planned} | {m["id"] for m in catalog}
         original_alias = alias
@@ -1152,7 +1300,12 @@ def cmd_addlocal(args):
     else:
         on_disk_filename = src.name
 
-    alias = args.alias_id or _slug_from_filename(src.stem)
+    if args.alias_id:
+        alias = args.alias_id
+    else:
+        alias = _slug_from_filename(src.stem)
+        if getattr(args, "prefix", None):
+            alias = f"{_slug_from_filename(args.prefix)}-{alias}"
     name = args.name or src.stem.replace("_", " ").replace("-", " ")
 
     size_gb = round(src.stat().st_size / (1024 ** 3), 2)
@@ -1760,10 +1913,16 @@ def cmd_chat(args):
     container_name = None
     if not match:
         print(f"{alias} is not running. Starting it now.")
-        ok, info = docker_driver.start_model(entry, cfg)
+        from . import rag_pipeline as _rp
+        ok, info = _rp.ensure_chat_with_repair(entry, cfg)
         if not ok:
             print(f"error: {info.get('error')}", file=sys.stderr)
+            if info.get("logs"):
+                print("--- last container logs ---", file=sys.stderr)
+                print(info["logs"], file=sys.stderr)
             return 1
+        if info.get("repaired"):
+            print(f"  re-downloaded {alias} after corrupt-GGUF crash; resumed startup")
         port = info["port"]
         container_name = info["container"]
     else:
@@ -1826,6 +1985,16 @@ def _build_rag_config(args, catalog_entry):
 
     # Explicit CLI scoping wins over the catalog field.
     cli_paths = [p.strip() for p in (args.rag_stores or "").split(",") if p.strip()]
+    cli_tags = list(args.rag_tag or [])
+    coll_name = getattr(args, "rag_collection", None)
+    if coll_name:
+        coll = rag_store_mod.get_collection(coll_name)
+        if not coll:
+            print(f"warning: unknown rag collection '{coll_name}' "
+                  f"(see `hydra-llm rag collections list`)", file=sys.stderr)
+        else:
+            cli_paths = list({*cli_paths, *(coll.get("paths") or [])})
+            cli_tags = list({*cli_tags, *(coll.get("tags") or [])})
     if args.rag:
         path = Path(args.rag).expanduser().resolve()
         if not _has_index(path):
@@ -1836,10 +2005,10 @@ def _build_rag_config(args, catalog_entry):
             cfg = rag_chat_mod.RagConfig(enabled=False)
         else:
             cfg = rag_chat_mod.RagConfig(single_store=path)
-    elif args.rag_all or args.rag_tag or cli_paths:
+    elif args.rag_all or cli_tags or cli_paths:
         cfg = rag_chat_mod.RagConfig(
             federated_all=bool(args.rag_all),
-            tags=list(args.rag_tag or []),
+            tags=cli_tags,
             store_paths=cli_paths,
         )
     elif catalog_entry and catalog_entry.get("rag_index"):
@@ -1903,6 +2072,125 @@ def cmd_persona_path(args):
 
 
 # --- rag / embedders ----------------------------------------------------------
+
+RAG_EXPLAINER = """\
+What RAG is in hydra-llm
+------------------------
+
+RAG ("retrieval-augmented generation") means: before the chat model
+answers a turn, hydra searches an index of your files for the chunks
+most relevant to the question and pastes them into the prompt as
+extra context. The chat model never reads the whole folder; it reads
+the top few matching chunks.
+
+Two model species are involved:
+  - the chat model    (e.g. qwen3-4b)         answers the turn
+  - the embedder      (e.g. nomic-embed-text) builds + queries the index
+
+How an index is laid out
+------------------------
+
+`hydra-llm index <folder>` walks the folder, classifies each file as
+code or prose, splits files into overlapping chunks, embeds each chunk
+into a vector, and stores the result in:
+
+    <folder>/.hydra-index/
+      meta.yaml            # which embedder, dimensions, mode
+      files.json           # mtime/size cache for incremental refresh
+      chunks.lance/        # LanceDB table (single-mode)
+      code.lance/          # or two tables in dual-mode
+      prose.lance/
+
+The index lives next to the data. Move the folder, the index moves
+with it.
+
+Each folder hydra has indexed is also recorded in a small global
+registry at $XDG_STATE_HOME/hydra-llm/rag-stores.json. That registry
+is what makes cross-folder retrieval possible: it's the catalog of
+"places hydra knows how to search".
+
+Using RAG in chat
+-----------------
+
+Simplest case, scoped to one folder:
+
+    cd ~/projects/myrepo
+    hydra-llm index .
+    hydra-llm chat qwen3-4b --rag .
+
+Every turn, hydra embeds your message, looks up the top-k matches
+in `~/projects/myrepo/.hydra-index/`, and prepends them to the prompt.
+
+Pulling RAG from a different folder
+-----------------------------------
+
+You don't have to be inside the indexed folder. Point `--rag` at any
+path that has a `.hydra-index/` subdirectory:
+
+    cd ~/anywhere
+    hydra-llm chat qwen3-4b --rag ~/projects/myrepo
+
+This is the everyday answer to "I'd like to receive RAG from other
+places".
+
+Pulling RAG from many folders at once (federated)
+-------------------------------------------------
+
+Three flags, pick whichever fits:
+
+  --rag-all                       search every registered store
+  --rag-stores p1,p2,p3           search just these paths (or any
+                                  store nested under them)
+  --rag-tag work --rag-tag novel  search stores carrying these tags
+                                  (set tags with `hydra-llm index --tag`)
+
+Examples:
+
+    # ask one question against everything you've ever indexed
+    hydra-llm query "where do we set the cache TTL?" --all
+
+    # chat with retrieval over two specific projects
+    hydra-llm chat qwen3-4b \\
+      --rag-stores ~/projects/api,~/projects/web
+
+    # tag-based: index your novel and notes folders with tag `writing`,
+    # then any chat session can pull from both via one flag
+    hydra-llm chat qwen3-4b --rag-tag writing
+
+To see what hydra has indexed and what's tagged:
+
+    hydra-llm rag stores
+
+To search without dropping into chat:
+
+    hydra-llm query "your question" --in ~/projects/myrepo
+    hydra-llm query "your question" --all
+
+Picking and managing embedders
+------------------------------
+
+First-run:    hydra-llm rag setup
+List/install: hydra-llm rag list-online
+              hydra-llm rag download <id>
+Custom GGUF:  hydra-llm rag addlocal --kind both \\
+                --dimensions 768 --pooling mean my-embedder.gguf
+
+The embedder runs as its own llama-server sidecar, started on demand.
+Stop it with `hydra-llm rag stop <id>` or `rag stop-all`.
+
+Disclaimer
+----------
+
+hydra-llm: NO WARRANTY. You alone are responsible for hardware, data,
+and model output. Read the LICENSE and README disclaimer before
+relying on this tool.
+"""
+
+
+def cmd_rag_explain(args):
+    sys.stdout.write(RAG_EXPLAINER)
+    return 0
+
 
 def cmd_rag_list_online(args):
     cfg = cfg_mod.load_user_config()
@@ -2085,6 +2373,35 @@ def cmd_rag_info(args):
 
 
 def cmd_rag_stores(args):
+    # Tag mutation: --path + --tag-add / --tag-remove. Doesn't touch any
+    # vectors; only edits the registry entry.
+    tag_add = list(getattr(args, "tag_add", []) or [])
+    tag_remove = list(getattr(args, "tag_remove", []) or [])
+    if tag_add or tag_remove:
+        if not args.path:
+            msg = "--tag-add / --tag-remove require --path <folder>"
+            if args.json:
+                print(json.dumps({"ok": False, "error": msg}))
+            else:
+                print(f"error: {msg}", file=sys.stderr)
+            return 2
+        target = Path(args.path).expanduser().resolve()
+        changed, tags = rag_store_mod.mutate_store_tags(
+            target, add=tag_add, remove=tag_remove)
+        if args.json:
+            print(json.dumps({"ok": True, "changed": changed,
+                              "path": str(target), "tags": tags}, indent=2))
+            return 0
+        if not changed and not tags:
+            print(f"error: {target} is not a registered store", file=sys.stderr)
+            print("hint: index it first with `hydra-llm index <path>`", file=sys.stderr)
+            return 1
+        if not changed:
+            print(f"no change ({target}); current tags: {', '.join(tags) or '-'}")
+            return 0
+        print(f"tags now: {', '.join(tags) or '-'}")
+        return 0
+
     if args.prune:
         dropped = rag_store_mod.prune_registry()
         if args.json:
@@ -2138,6 +2455,81 @@ def cmd_rag_stores(args):
         if len(tags) > 19:
             tags = tags[:18] + "…"
         print(f"{s['path']:<55} {chunks:<10} {tags:<20} {', '.join(embedders) or '-'}")
+    return 0
+
+
+def cmd_rag_collections_list(args):
+    cols = (rag_store_mod.load_collections().get("collections") or {})
+    if args.json:
+        print(json.dumps({"ok": True, "collections": cols}, indent=2))
+        return 0
+    if not cols:
+        print("No saved collections.")
+        print("Create one: hydra-llm rag collections save NAME --path P --tag T")
+        return 0
+    name_w = max(8, max(len(n) for n in cols))
+    print(f"{'NAME':<{name_w}}  PATHS  TAGS")
+    for name in sorted(cols):
+        v = cols[name]
+        paths_n = len(v.get("paths") or [])
+        tags_str = ",".join(v.get("tags") or []) or "-"
+        print(f"{name:<{name_w}}  {paths_n:<5}  {tags_str}")
+    return 0
+
+
+def cmd_rag_collections_save(args):
+    if not args.path and not args.tag:
+        msg = "save requires at least one --path or --tag"
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 2
+    norm_paths = [str(Path(p).expanduser().resolve()) for p in (args.path or [])]
+    saved = rag_store_mod.upsert_collection(args.name,
+                                            paths_list=norm_paths,
+                                            tags=list(args.tag or []))
+    if args.json:
+        print(json.dumps({"ok": True, "name": args.name, "collection": saved}, indent=2))
+        return 0
+    print(f"saved collection '{args.name}' "
+          f"({len(saved.get('paths') or [])} paths, "
+          f"{len(saved.get('tags') or [])} tags)")
+    return 0
+
+
+def cmd_rag_collections_delete(args):
+    ok = rag_store_mod.delete_collection(args.name)
+    if not ok:
+        print(f"error: no such collection: {args.name}", file=sys.stderr)
+        return 1
+    print(f"deleted collection '{args.name}'")
+    return 0
+
+
+def cmd_rag_collections_show(args):
+    coll = rag_store_mod.get_collection(args.name)
+    if not coll:
+        msg = f"no such collection: {args.name}"
+        if args.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"ok": True, "name": args.name, "collection": coll}, indent=2))
+        return 0
+    print(f"collection: {args.name}")
+    paths_l = coll.get("paths") or []
+    tags_l = coll.get("tags") or []
+    if paths_l:
+        print("  paths:")
+        for p in paths_l:
+            print(f"    {p}")
+    if tags_l:
+        print(f"  tags: {', '.join(tags_l)}")
+    if not paths_l and not tags_l:
+        print("  (empty)")
     return 0
 
 
@@ -2631,6 +3023,46 @@ def cmd_index(args):
     elif args.no_prose:
         only_kind = "code"
 
+    # Content-aware embedder pick. When the user hasn't named an embedder
+    # explicitly and the folder hasn't been indexed before, peek at the
+    # file mix first and offer the embedder best suited to it. Cheap (no
+    # embedding done in the walk).
+    if (not (args.embedder or args.code_embedder or args.prose_embedder)
+            and not dual_index
+            and not rag_store_mod.has_index(Path(args.path).expanduser().resolve())
+            and (not args.json) and sys.stdin.isatty() and sys.stdout.isatty()):
+        from . import rag_index as _walk_mod
+        _files, _summary = _walk_mod.walk_folder(
+            Path(args.path).expanduser().resolve(),
+            max_file_size_bytes=int(args.max_file_size_mb * 1024 * 1024),
+            extra_excludes=args.exclude,
+            extra_includes=args.include,
+            max_depth=args.depth,
+        )
+        if _summary.code_count + _summary.prose_count > 0:
+            rec = rag_pipeline.recommend_for_corpus(_summary, cfg=cfg)
+            auto_code, auto_prose = rag_pipeline._detect_default_embedders(cfg)
+            tier_default = auto_code or auto_prose
+            chosen = rec["single_embedder"]
+            if chosen and tier_default and chosen.get("id") != tier_default.get("id"):
+                size_gb = chosen.get("size_gb")
+                size_str = f"{size_gb} GB" if size_gb else ""
+                print(f"Detected: {rec['reason']}")
+                print(f"Recommended embedder: {chosen['id']}"
+                      f"{(' (' + size_str + ')') if size_str else ''}")
+                print(f"Currently configured default: {tier_default['id']}")
+                ans = input("Use the recommendation for this folder? [Y/n] ").strip().lower()
+                if not ans or ans in ("y", "yes"):
+                    code_e = chosen
+                    prose_e = chosen
+            if rec["dual_hint"] and not dual_index:
+                print(
+                    "This folder is mixed; if you want top retrieval quality "
+                    "on the prose half, re-run with --dual-index "
+                    "(adds a prose embedder, +84 MB).",
+                    file=sys.stderr,
+                )
+
     plan = rag_pipeline.plan_index(
         Path(args.path),
         cfg=cfg,
@@ -2789,7 +3221,17 @@ def cmd_query(args):
     #   - --in <path> -> single store at that path
     #   - else -> cwd if it has an index, else federated all-stores
     explicit_paths = [p.strip() for p in (args.stores or "").split(",") if p.strip()]
-    federated = bool(args.all or args.tag or explicit_paths)
+    explicit_tags = list(args.tag or [])
+    coll_name = getattr(args, "rag_collection", None)
+    if coll_name:
+        coll = rag_store_mod.get_collection(coll_name)
+        if not coll:
+            print(f"warning: unknown rag collection '{coll_name}' "
+                  f"(see `hydra-llm rag collections list`)", file=sys.stderr)
+        else:
+            explicit_paths = list({*explicit_paths, *(coll.get("paths") or [])})
+            explicit_tags = list({*explicit_tags, *(coll.get("tags") or [])})
+    federated = bool(args.all or explicit_tags or explicit_paths)
     in_path = args.in_path
     if not federated and in_path is None:
         cwd_idx = Path.cwd() / rag_store_mod.INDEX_DIR_NAME
@@ -2803,7 +3245,7 @@ def cmd_query(args):
             results = rag_pipeline.retrieve_federated(
                 args.text,
                 store_paths=explicit_paths or None,
-                tags=args.tag or None,
+                tags=explicit_tags or None,
                 top_k=args.top_k,
                 cfg=cfg,
                 code_only=args.code_only,
@@ -2812,8 +3254,10 @@ def cmd_query(args):
             scope_label = "all registered stores"
             if explicit_paths:
                 scope_label = f"{len(explicit_paths)} stores"
-            if args.tag:
-                scope_label = f"tagged {','.join(args.tag)}"
+            if explicit_tags:
+                scope_label = f"tagged {','.join(explicit_tags)}"
+            if coll_name:
+                scope_label = f"collection '{coll_name}'"
         else:
             results = rag_pipeline.retrieve(
                 Path(in_path),

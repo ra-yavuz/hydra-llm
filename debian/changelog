@@ -1,3 +1,66 @@
+hydra-llm (0.2.6-1) unstable; urgency=low
+
+  * `help` now works as a subverb everywhere. `hydra-llm rag help`,
+    `hydra-llm chat help`, `hydra-llm rag setup help` and so on print
+    the relevant help text instead of erroring out. Group parsers
+    (`rag`, `persona`) get a real `help` child verb that also accepts
+    a sub-subcommand topic; leaf parsers honor the convention via a
+    one-line argv rewrite so no per-leaf changes were needed.
+  * New `hydra-llm rag explain` prints a concise primer on how RAG
+    works in hydra: per-folder LanceDB indexes at
+    `<folder>/.hydra-index/`, the global stores registry, and how to
+    retrieve from a different folder or federate across many. Linked
+    from the top of `hydra-llm rag --help`.
+  * `hydra-llm chat` no longer tries to auto-attach to embedder
+    sidecars. Embedder containers share the chat-model name root so
+    the docker name filter caught both; `list_running` now excludes
+    them at source, fixing the `embed-* unknown alias` foot-gun.
+  * Content-aware embedder pick on first index. When the user has not
+    named an embedder explicitly and the folder has no `.hydra-index/`
+    yet, `hydra-llm index` peeks at the file mix and offers a better
+    default: nomic-embed-text on >80% prose folders, qwen3-embed-4b
+    on code/mixed. Genuinely mixed corpora get a one-line
+    `--dual-index` hint.
+  * `hydra-llm rag stores --path P --tag-add foo` (and `--tag-remove`)
+    retag an existing store without reindexing it.
+  * Saved store collections. `hydra-llm rag collections save NAME
+    --path P --tag T` records a named federation; chat and query then
+    accept `--rag-collection NAME` instead of repeating the same
+    paths/tags every invocation.
+  * Embedder idle-TTL reaper. Every embed call touches a per-alias
+    timestamp file under `$XDG_STATE_HOME/hydra-llm/embedder-touch/`;
+    on the next CLI invocation hydra stops sidecars idle longer than
+    `embedder_idle_ttl_seconds`. The config key existed since 0.2.x
+    with a 60-second default; only the enforcement was missing.
+  * `hydra-llm doctor` now reports the engine image age and the
+    llama.cpp ref it was built from (the LABEL added in v0.2.5), so
+    a user troubleshooting a model-load failure can see at a glance
+    when their image was built.
+  * Chat-model auto-recover on corrupt GGUF. The same auto-redownload
+    pattern that was added for embedder sidecars in v0.2.5 now wraps
+    chat-model startup: if the container fails to come up and the
+    logs match the corrupt-GGUF signature, hydra deletes the local
+    GGUF, re-downloads, and retries once.
+  * Resumable downloads. The downloader now sends a `Range` header
+    when a `.part` file is present from a previous interrupted
+    download, falls back gracefully if the server refuses the range,
+    and leaves the partial file in place on network drop so the next
+    attempt picks up where the last one stopped.
+  * `hydra-llm addlocal --prefix <slug>` prepends a slug to derived
+    ids in folder mode and single-file mode, taking the edge off
+    long Hugging-Face filenames.
+  * Chat session save line is now conditional. `[session saved]`
+    only prints if the current REPL produced new messages.
+  * apt source line in install instructions pins
+    `arch=amd64,arm64`, suppressing the harmless but noisy `i386`
+    skip warning on machines with i386 as a foreign dpkg architecture.
+  * `scripts/sha256-backfill.py` (dev tool, not shipped) walks the
+    catalog YAMLs, computes sha256 of each upstream URL by streaming,
+    and writes the values back so the downloader's existing
+    verification path stops being a no-op.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Fri, 08 May 2026 04:23:59 +0000
+
 hydra-llm (0.2.5-1) unstable; urgency=low
 
   * Engine rebuilds are now automatic across `apt upgrade` and `apt

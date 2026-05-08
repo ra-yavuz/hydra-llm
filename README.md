@@ -88,7 +88,7 @@ End to end. Zero to chatting with retrieval over your own folder. Every command 
 One line. Sets up the signed apt repo, refreshes the package index, installs the CLI. Idempotent:
 
 ```sh
-sudo bash -c 'set -e; install -m 0755 -d /etc/apt/keyrings && curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg -o /etc/apt/keyrings/ra-yavuz.gpg && echo "deb [signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" > /etc/apt/sources.list.d/ra-yavuz.list && apt update && apt install -y hydra-llm'
+sudo bash -c 'set -e; install -m 0755 -d /etc/apt/keyrings && curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg -o /etc/apt/keyrings/ra-yavuz.gpg && echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" > /etc/apt/sources.list.d/ra-yavuz.list && apt update && apt install -y hydra-llm'
 ```
 
 On KDE, optional panel widget:
@@ -106,7 +106,7 @@ Already have the `ra-yavuz` apt repo? Then it is just `sudo apt update && sudo a
 sudo install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://ra-yavuz.github.io/apt/pubkey.gpg \
   | sudo tee /etc/apt/keyrings/ra-yavuz.gpg >/dev/null
-echo "deb [signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" \
+echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/ra-yavuz.gpg] https://ra-yavuz.github.io/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/ra-yavuz.list
 sudo apt update
 sudo apt install hydra-llm

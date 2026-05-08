@@ -29,10 +29,18 @@ def _container_name(prefix: str, alias: str) -> str:
 
 
 def list_running(cfg=None):
-    """List all containers we manage. Returns list of dicts with alias, container, state, port, status."""
+    """List all chat-model containers we manage. Returns list of dicts with
+    alias, container, state, port, status.
+
+    Embedder sidecars are excluded: their container prefix
+    (`hydra-embed-` by default) matches the chat-model `name=^hydra-`
+    docker filter, so we have to filter them out by name after the fact.
+    Use `list_running_embedders()` for the sidecar surface instead.
+    """
     if cfg is None:
         cfg = cfg_mod.load_user_config()
     prefix = cfg["container_prefix"]
+    embed_prefix = cfg.get("embedder_container_prefix", "hydra-embed-")
     if not docker_available():
         return [], "docker not installed"
     try:
@@ -50,6 +58,10 @@ def list_running(cfg=None):
         if len(parts) < 5:
             continue
         name, state, ports, status, created = parts
+        # Embedder containers share the chat-model prefix root (`hydra-`)
+        # so the `name=^hydra-` filter above also catches them. Skip them.
+        if embed_prefix and name.startswith(embed_prefix):
+            continue
         alias = name[len(prefix):]
         port = None
         m = re.search(r":(\d+)->8081/tcp", ports)
@@ -294,6 +306,47 @@ def image_tag(variant: str) -> str:
 # (default 18080..18099). Treated as sidecars rather than catalog-listed chat
 # models: they don't show up in `hydra-llm list` or `hydra-llm status`, only
 # under `hydra-llm rag list` / `hydra-llm rag info`.
+
+def engine_image_info(cfg=None) -> list[dict]:
+    """Return one dict per `hydra-llm/llama-server:*` image present locally.
+
+    Each dict has: image, created (ISO), llama_cpp_ref (from the LABEL we
+    set during build, may be None for pre-v0.2.5 images), size_bytes.
+    Empty list if docker is unavailable or no engine image exists.
+    """
+    if not docker_available():
+        return []
+    try:
+        out = subprocess.run(
+            ["docker", "images",
+             "--filter", "reference=hydra-llm/llama-server",
+             "--format", "{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}"],
+            capture_output=True, text=True, check=True, timeout=5,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return []
+    rows: list[dict] = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        image, image_id, created, size = parts
+        ref = None
+        try:
+            r = subprocess.run(
+                ["docker", "inspect", "--format",
+                 "{{ index .Config.Labels \"llama_cpp_ref\" }}", image_id],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                ref = (r.stdout.strip() or None)
+        except subprocess.TimeoutExpired:
+            pass
+        rows.append({"image": image, "id": image_id,
+                     "created": created, "size": size,
+                     "llama_cpp_ref": ref})
+    return rows
+
 
 def list_running_embedders(cfg=None):
     """List embedder sidecars hydra manages. Same shape as list_running()."""

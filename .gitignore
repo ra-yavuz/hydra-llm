@@ -35,3 +35,6 @@ personas/*.md
 !personas/friendly-tutor.md
 !personas/concise-coder.md
 .hydra-index/
+
+# Local-only docs that intentionally don't ship.
+RELEASE.md

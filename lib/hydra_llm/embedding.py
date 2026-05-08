@@ -8,13 +8,15 @@ which family wants what.
 from __future__ import annotations
 
 import json
+import os
+import time
 import urllib.error
 import urllib.request
 from typing import Iterable
 
 import numpy as np
 
-from . import docker_driver, rag_catalog
+from . import docker_driver, paths, rag_catalog
 
 
 class EmbeddingError(RuntimeError):
@@ -75,6 +77,7 @@ def embed_documents(embedder_entry: dict, texts: list[str],
         batch = _apply_prefix(texts[i:i + batch_size], prefix)
         out.extend(_post_embeddings(base_url, batch))
     arr = np.asarray(out, dtype=np.float32)
+    touch_embedder(embedder_entry.get("id", ""))
     return arr
 
 
@@ -85,6 +88,7 @@ def embed_query(embedder_entry: dict, text: str,
         base_url = _resolve_running_url(embedder_entry)
     prefix = embedder_entry.get("query_prefix") or ""
     vecs = _post_embeddings(base_url, _apply_prefix([text], prefix))
+    touch_embedder(embedder_entry.get("id", ""))
     return np.asarray(vecs[0], dtype=np.float32)
 
 
@@ -99,6 +103,77 @@ def _resolve_running_url(embedder_entry: dict) -> str:
             "Use docker_driver.ensure_embedder_running() before calling embed_*."
         )
     return f"http://127.0.0.1:{match['port']}"
+
+
+def _touch_path(alias: str):
+    return paths.EMBEDDER_TOUCH_DIR / alias
+
+
+def touch_embedder(alias: str) -> None:
+    """Record that we just used the embedder named `alias`. Idempotent;
+    fail-soft (e.g. on a read-only filesystem we silently no-op so a
+    chat session is never blocked by a missing touch dir).
+    """
+    if not alias:
+        return
+    p = _touch_path(alias)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # Open+close is enough; we just want mtime to update. `os.utime`
+        # is the right tool for that.
+        if not p.exists():
+            p.touch()
+        else:
+            os.utime(p, None)
+    except OSError:
+        pass
+
+
+def last_touch_seconds_ago(alias: str) -> float | None:
+    """Seconds since the last touch, or None if no touch on record."""
+    p = _touch_path(alias)
+    try:
+        return time.time() - p.stat().st_mtime
+    except (OSError, FileNotFoundError):
+        return None
+
+
+def reap_idle_embedders(cfg: dict | None = None) -> list[str]:
+    """Stop embedder sidecars that haven't been touched in
+    cfg['embedder_idle_ttl_seconds']. Returns the list of stopped
+    aliases. Fail-soft: if anything goes wrong (no docker, no touch dir
+    yet) returns []; a startup hook should never block CLI invocations.
+    """
+    try:
+        from . import config as cfg_mod
+        if cfg is None:
+            cfg = cfg_mod.load_user_config()
+        ttl = int(cfg.get("embedder_idle_ttl_seconds") or 0)
+        if ttl <= 0:
+            return []
+        rows, err = docker_driver.list_running_embedders(cfg)
+        if err or not rows:
+            return []
+        stopped = []
+        for r in rows:
+            if r.get("state") != "running":
+                continue
+            alias = r.get("alias")
+            ago = last_touch_seconds_ago(alias)
+            # No touch on record means this embedder was started by a
+            # prior version of hydra (pre-reaper). Touch it now so we
+            # don't kill it instantly; let one full TTL elapse before
+            # the next run reaps it.
+            if ago is None:
+                touch_embedder(alias)
+                continue
+            if ago > ttl:
+                ok, _info = docker_driver.stop_embedder(alias, cfg)
+                if ok:
+                    stopped.append(alias)
+        return stopped
+    except Exception:
+        return []
 
 
 def cosine(a: np.ndarray, b: np.ndarray) -> np.ndarray:

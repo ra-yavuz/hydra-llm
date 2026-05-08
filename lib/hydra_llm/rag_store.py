@@ -277,6 +277,31 @@ def register_store(root: Path, tags: list[str] | None = None) -> None:
     save_registry(reg)
 
 
+def mutate_store_tags(root: Path, *, add: list[str] | None = None,
+                      remove: list[str] | None = None) -> tuple[bool, list[str]]:
+    """Add and/or remove tags on an existing registered store.
+
+    Returns (changed, current_tags). `changed` is False if the store is not
+    registered or the operation was a no-op.
+    """
+    rp = str(Path(root).expanduser().resolve())
+    reg = load_registry()
+    stores = reg.get("stores") or []
+    add_set = set(add or [])
+    remove_set = set(remove or [])
+    for s in stores:
+        if s.get("path") != rp:
+            continue
+        before = set(s.get("tags") or [])
+        after = (before | add_set) - remove_set
+        if after == before:
+            return (False, sorted(before))
+        s["tags"] = sorted(after)
+        save_registry(reg)
+        return (True, sorted(after))
+    return (False, [])
+
+
 def store_tags(root: Path) -> list[str]:
     """Return the tags for a registered store (or [] if not registered)."""
     rp = str(Path(root).expanduser().resolve())
@@ -325,6 +350,59 @@ def unregister_store(root: Path) -> bool:
     reg["stores"] = [s for s in (reg.get("stores") or []) if s.get("path") != rp]
     save_registry(reg)
     return len(reg["stores"]) < before
+
+
+def _collections_path():
+    from . import paths
+    return paths.RAG_COLLECTIONS
+
+
+def load_collections() -> dict:
+    """Saved store collections. Schema:
+        {"collections": {"<name>": {"paths": [...], "tags": [...]}}}
+    """
+    p = _collections_path()
+    if not p.is_file():
+        return {"collections": {}}
+    try:
+        with open(p) as f:
+            return json.load(f) or {"collections": {}}
+    except (OSError, json.JSONDecodeError):
+        return {"collections": {}}
+
+
+def save_collections(data: dict) -> Path:
+    p = _collections_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+    return p
+
+
+def upsert_collection(name: str, *, paths_list: list[str] | None = None,
+                      tags: list[str] | None = None) -> dict:
+    data = load_collections()
+    cols = data.setdefault("collections", {})
+    cols[name] = {
+        "paths": sorted(set(paths_list or [])),
+        "tags": sorted(set(tags or [])),
+    }
+    save_collections(data)
+    return cols[name]
+
+
+def delete_collection(name: str) -> bool:
+    data = load_collections()
+    cols = data.get("collections") or {}
+    if name not in cols:
+        return False
+    del cols[name]
+    save_collections(data)
+    return True
+
+
+def get_collection(name: str) -> dict | None:
+    return (load_collections().get("collections") or {}).get(name)
 
 
 def prune_registry() -> list[str]:

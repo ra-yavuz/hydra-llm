@@ -27,6 +27,13 @@ USER_CONFIG = CONFIG_DIR / "config.yaml"
 # Registry of folders the user has indexed for RAG. One JSON object,
 # updated whenever `hydra-llm index <path>` runs.
 RAG_STORES_REGISTRY = STATE_DIR / "rag-stores.json"
+# Per-embedder "last touched" timestamps. One zero-byte file per alias
+# whose mtime is the last embed call. Used by the idle-TTL reaper to
+# stop sidecars that have gone unused.
+EMBEDDER_TOUCH_DIR = STATE_DIR / "embedder-touch"
+# Saved store collections (named federations of paths/tags) created by
+# `hydra-llm rag collections save`.
+RAG_COLLECTIONS = STATE_DIR / "rag-collections.json"
 # Per-alias server-launch overrides. One JSON file per alias; each
 # layered on top of the global config + catalog defaults at start time.
 SERVER_OVERRIDES_DIR = CONFIG_DIR / "server"
@@ -84,5 +91,5 @@ def ensure_user_dirs():
     """Create the user dirs if they don't exist. Safe to call repeatedly."""
     for d in (CONFIG_DIR, STATE_DIR, CACHE_DIR, DATA_DIR, SESSIONS_DIR,
               PERSONAS_DIR, MODELS_DIR_DEFAULT, EMBEDDERS_DIR_DEFAULT,
-              SERVER_OVERRIDES_DIR):
+              SERVER_OVERRIDES_DIR, EMBEDDER_TOUCH_DIR):
         d.mkdir(parents=True, exist_ok=True)

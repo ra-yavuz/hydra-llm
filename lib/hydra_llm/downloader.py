@@ -37,12 +37,78 @@ def download(catalog_entry, cfg, force: bool = False, on_progress=None,
     if token and "huggingface.co" in url:
         headers["Authorization"] = f"Bearer {token}"
 
+    # Resume support: if a partial download exists from a previous attempt,
+    # ask the server for the rest with Range. If the server doesn't honor
+    # ranges, we restart from zero (handled below by checking the response
+    # status code).
+    resume_from = 0
+    if tmp.exists() and not force:
+        try:
+            resume_from = tmp.stat().st_size
+        except OSError:
+            resume_from = 0
+    if resume_from > 0:
+        headers["Range"] = f"bytes={resume_from}-"
+
     req = urllib.request.Request(url, headers=headers)
+    open_mode = "ab" if resume_from > 0 else "wb"
     try:
-        with urllib.request.urlopen(req) as resp, open(tmp, "wb") as out:
-            total = int(resp.headers.get("Content-Length", 0))
+        resp = urllib.request.urlopen(req)
+    except urllib.error.HTTPError as e:
+        # If the server refuses the Range (416 Requested Range Not Satisfiable),
+        # the .part is probably already complete or corrupt. Drop it and start
+        # over with no Range header.
+        if e.code in (416,) and resume_from > 0:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            resume_from = 0
+            headers.pop("Range", None)
+            req = urllib.request.Request(url, headers=headers)
+            try:
+                resp = urllib.request.urlopen(req)
+            except urllib.error.HTTPError as e2:
+                raise RuntimeError(f"download failed: HTTP {e2.code} {e2.reason}") from e2
+            except urllib.error.URLError as e2:
+                raise RuntimeError(f"download failed: {e2.reason}") from e2
+            open_mode = "wb"
+        else:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise RuntimeError(f"download failed: HTTP {e.code} {e.reason}") from e
+    except urllib.error.URLError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(f"download failed: {e.reason}") from e
+
+    # If we asked for a Range but got 200 (full body), the server didn't
+    # honor it; truncate and start from zero.
+    if resume_from > 0 and resp.status == 200:
+        resp.close()
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        resume_from = 0
+        headers.pop("Range", None)
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            resp = urllib.request.urlopen(req)
+        except (urllib.error.HTTPError, urllib.error.URLError) as e:
+            raise RuntimeError(f"download failed: {e}") from e
+        open_mode = "wb"
+
+    try:
+        with resp, open(tmp, open_mode) as out:
+            content_len = int(resp.headers.get("Content-Length", 0))
+            total = content_len + resume_from
             chunk = 1 << 16  # 64 KiB
-            done = 0
+            done = resume_from
             last_report = 0.0
             while True:
                 buf = resp.read(chunk)
@@ -58,18 +124,11 @@ def download(catalog_entry, cfg, force: bool = False, on_progress=None,
                     last_report = now
             if not on_progress:
                 _print_progress(done, total, final=True)
-    except urllib.error.HTTPError as e:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise RuntimeError(f"download failed: HTTP {e.code} {e.reason}") from e
     except urllib.error.URLError as e:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise RuntimeError(f"download failed: {e.reason}") from e
+        # Network drop mid-stream. Leave the .part on disk so the next
+        # invocation resumes from where we stopped.
+        raise RuntimeError(f"download interrupted: {e.reason}. "
+                           f"Re-run to resume from {tmp.stat().st_size} bytes") from e
 
     expected = catalog_entry.get("sha256")
     if expected:

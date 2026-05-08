@@ -305,6 +305,7 @@ def interactive_chat(
 
     effective_session_path = session_file if session_file else session_path(session_name)
     messages = load_session_from(effective_session_path, sys_prompt)
+    initial_message_count = len(messages)
     print(color(f"[session: {effective_session_path}]", "dim"))
     # If the user has changed the prompt since the session was saved, reflect that.
     if messages and messages[0].get("role") == "system" and sys_prompt:
@@ -439,5 +440,6 @@ def interactive_chat(
             messages.append({"role": "assistant", "content": full})
             save_session_to(effective_session_path, messages)
 
-    save_session_to(effective_session_path, messages)
-    print(color("[session saved]", "dim"))
+    if len(messages) > initial_message_count:
+        save_session_to(effective_session_path, messages)
+        print(color("[session saved]", "dim"))

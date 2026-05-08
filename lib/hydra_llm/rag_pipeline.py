@@ -39,6 +39,73 @@ _CORRUPT_GGUF_HINTS = (
 )
 
 
+def ensure_chat_with_repair(catalog_entry: dict, cfg: dict,
+                            *, wait_timeout: float = 30.0,
+                            port: int | None = None,
+                            progress=None) -> tuple[bool, dict]:
+    """Wrap docker_driver.start_model with one auto-repair pass.
+
+    Mirror of `_ensure_embedder_with_repair` for chat models. Starts the
+    model container, waits for /health, and if it never comes up while
+    the container logs match a corrupt-GGUF crash, re-downloads the
+    GGUF once and retries. Anything else (port collision, missing
+    image, etc.) bubbles up immediately.
+    """
+    import time as _t
+    ok, info = docker_driver.start_model(catalog_entry, cfg, port=port)
+    if not ok:
+        return False, info
+    if info.get("already_running"):
+        return True, info
+    name = info.get("container")
+    chat_port = info.get("port")
+    deadline = _t.monotonic() + wait_timeout
+    while _t.monotonic() < deadline:
+        if docker_driver.probe_health(chat_port, timeout=0.4):
+            return True, info
+        # If the container died, no point waiting further.
+        if name and docker_driver._container_state(name) not in ("running", "created"):
+            break
+        _t.sleep(0.5)
+    # Didn't come up. Inspect logs for the corrupt-GGUF signature.
+    logs = ""
+    if name:
+        try:
+            logs = docker_driver.container_logs_tail(name, n=80) or ""
+        except Exception:
+            logs = ""
+    if not any(hint in logs for hint in _CORRUPT_GGUF_HINTS):
+        info["error"] = info.get("error") or "model failed to become ready"
+        info["logs"] = logs
+        return False, info
+    # Corrupt GGUF. Re-download and retry once.
+    if progress is not None:
+        progress("repairing-chat-model", {"alias": catalog_entry["id"]})
+    models_dir = (
+        Path(cfg.get("models_dir") or paths.MODELS_DIR_DEFAULT).expanduser()
+    )
+    target = models_dir / catalog_entry["filename"]
+    try:
+        if target.exists():
+            target.unlink()
+    except OSError:
+        pass
+    try:
+        docker_driver.stop(catalog_entry["id"], cfg)
+    except Exception:
+        pass
+    try:
+        downloader.download(catalog_entry, cfg, force=True, dest_dir=models_dir)
+    except RuntimeError as e:
+        info["error"] = f"corrupt GGUF; redownload failed: {e}"
+        info["logs"] = logs
+        return False, info
+    ok2, info2 = docker_driver.start_model(catalog_entry, cfg, port=port)
+    if ok2:
+        info2["repaired"] = True
+    return ok2, info2
+
+
 def _ensure_embedder_with_repair(embedder_entry: dict, cfg: dict,
                                  *, wait_timeout: float = 60.0,
                                  progress=None) -> tuple[bool, dict]:
@@ -155,6 +222,58 @@ def _detect_default_embedders(cfg: dict) -> tuple[dict | None, dict | None]:
     code = _by_id(explicit_code) or _pick("code")
     prose = _by_id(explicit_prose) or _pick("prose")
     return code, prose
+
+
+def recommend_for_corpus(summary: rag_index.WalkSummary,
+                         cfg: dict | None = None) -> dict:
+    """Given a walk summary, recommend an embedder pick for this corpus.
+
+    Returns a dict with:
+        single_embedder: dict | None     # the recommended single-mode embedder
+        dual_hint: bool                  # True if corpus is genuinely mixed
+        reason: str                      # human-readable rationale
+        prose_pct: int                   # 0..100
+
+    Heuristic:
+      > 80% prose       -> prefer the installed prose embedder if any,
+                           else fall back to the tier-default code one
+      > 80% code        -> the tier-default code embedder
+      mixed 40-80% code -> the tier-default code embedder, but raise
+                           dual_hint if the corpus has enough volume
+                           that quality matters (>= 25 prose files)
+    """
+    if cfg is None:
+        cfg = cfg_mod.load_user_config()
+    auto_code, auto_prose = _detect_default_embedders(cfg)
+    total = max(1, summary.code_count + summary.prose_count)
+    prose_pct = int(round(100 * summary.prose_count / total))
+    code_pct = 100 - prose_pct
+    if prose_pct >= 80:
+        # Strongly prose. Prefer the prose embedder if we have one
+        # distinct from the code one (smaller and prose-tuned).
+        chosen = auto_prose or auto_code
+        return {
+            "single_embedder": chosen,
+            "dual_hint": False,
+            "reason": f"{prose_pct}% prose ({summary.prose_count} files)",
+            "prose_pct": prose_pct,
+        }
+    if code_pct >= 80:
+        return {
+            "single_embedder": auto_code,
+            "dual_hint": False,
+            "reason": f"{code_pct}% code ({summary.code_count} files)",
+            "prose_pct": prose_pct,
+        }
+    # Mixed: code embedder handles prose acceptably; flag dual when the
+    # prose half is big enough that quality difference would actually
+    # matter.
+    return {
+        "single_embedder": auto_code,
+        "dual_hint": summary.prose_count >= 25 and summary.code_count >= 25,
+        "reason": f"mixed ({code_pct}% code, {prose_pct}% prose)",
+        "prose_pct": prose_pct,
+    }
 
 
 def plan_index(root: Path,
