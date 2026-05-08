@@ -40,16 +40,18 @@ _CORRUPT_GGUF_HINTS = (
 
 
 def ensure_chat_with_repair(catalog_entry: dict, cfg: dict,
-                            *, wait_timeout: float = 30.0,
+                            *, early_check_seconds: float = 5.0,
                             port: int | None = None,
                             progress=None) -> tuple[bool, dict]:
     """Wrap docker_driver.start_model with one auto-repair pass.
 
     Mirror of `_ensure_embedder_with_repair` for chat models. Starts the
-    model container, waits for /health, and if it never comes up while
-    the container logs match a corrupt-GGUF crash, re-downloads the
-    GGUF once and retries. Anything else (port collision, missing
-    image, etc.) bubbles up immediately.
+    model container, watches it for `early_check_seconds` to catch the
+    corrupt-GGUF crash signature (llama.cpp aborts at gguf_init_from_file
+    within a couple seconds). If the container is still alive after the
+    early check, return ok=True and let the caller wait on /health on
+    its own (chat.py's REPL has a 300s log-streamer wait that is the
+    right place for slow-loading big models).
     """
     import time as _t
     ok, info = docker_driver.start_model(catalog_entry, cfg, port=port)
@@ -58,16 +60,22 @@ def ensure_chat_with_repair(catalog_entry: dict, cfg: dict,
     if info.get("already_running"):
         return True, info
     name = info.get("container")
-    chat_port = info.get("port")
-    deadline = _t.monotonic() + wait_timeout
+    deadline = _t.monotonic() + early_check_seconds
+    died_early = False
     while _t.monotonic() < deadline:
-        if docker_driver.probe_health(chat_port, timeout=0.4):
-            return True, info
-        # If the container died, no point waiting further.
         if name and docker_driver._container_state(name) not in ("running", "created"):
+            died_early = True
             break
-        _t.sleep(0.5)
-    # Didn't come up. Inspect logs for the corrupt-GGUF signature.
+        _t.sleep(0.25)
+    if not died_early:
+        # Container is still alive after the early check; hand off.
+        # chat.py's interactive_chat will wait up to 300s for /health
+        # and stream the model-load logs in the meantime.
+        return True, info
+    # Container died inside the early window. Inspect logs for the
+    # corrupt-GGUF signature; only attempt a re-download if it's that
+    # specific failure mode. Anything else (OOM, missing image, port
+    # collision after race, etc.) bubbles up to the caller with logs.
     logs = ""
     if name:
         try:
@@ -75,7 +83,7 @@ def ensure_chat_with_repair(catalog_entry: dict, cfg: dict,
         except Exception:
             logs = ""
     if not any(hint in logs for hint in _CORRUPT_GGUF_HINTS):
-        info["error"] = info.get("error") or "model failed to become ready"
+        info["error"] = info.get("error") or "container exited during startup"
         info["logs"] = logs
         return False, info
     # Corrupt GGUF. Re-download and retry once.

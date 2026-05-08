@@ -93,6 +93,9 @@ def _probe_health_once(base_url: str) -> bool:
 def _stream_logs_until_ready(container_name: str, base_url: str, deadline: float) -> bool:
     """Tail container stdout/stderr live in this terminal until /health is ok or
     the deadline / container exit aborts. Returns True if ready, False otherwise.
+
+    On failure, surfaces the inspector verdict so the user sees *why* the
+    container died (OOMKilled, non-zero exit, etc.) rather than just "exited".
     """
     sys.stdout.write(color(f"[streaming startup logs from {container_name}]\n", "dim"))
     sys.stdout.flush()
@@ -106,6 +109,7 @@ def _stream_logs_until_ready(container_name: str, base_url: str, deadline: float
             if tail.poll() is not None:
                 # docker logs -f exits when the container is removed.
                 sys.stdout.write(color("\n[container exited before becoming healthy]\n", "red"))
+                _explain_container_exit(container_name)
                 return False
             if _probe_health_once(base_url):
                 ready = True
@@ -119,6 +123,45 @@ def _stream_logs_until_ready(container_name: str, base_url: str, deadline: float
             except subprocess.TimeoutExpired:
                 tail.kill()
     return ready
+
+
+def _explain_container_exit(container_name: str) -> None:
+    """Inspect a (possibly-removed) container and tell the user *why* it died.
+
+    Looks for the canonical signals: OOMKilled, non-zero exit code, killed
+    by SIGKILL/9, etc. Falls back to the last 30 log lines so the user
+    has something concrete to act on. Fail-soft: never raises.
+    """
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "--format",
+             "{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|"
+             "{{.State.Error}}|{{.State.FinishedAt}}",
+             container_name],
+            capture_output=True, text=True, timeout=4,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            status, code, oom, err, finished = (r.stdout.strip().split("|", 4) + [""] * 5)[:5]
+            parts = [f"status={status}", f"exit={code}"]
+            if oom == "true":
+                parts.append("OOMKilled=YES (kernel killed the container; reduce gpu_layers "
+                             "or pick a smaller model for this hardware)")
+            if err:
+                parts.append(f"docker_error={err}")
+            sys.stderr.write(color("  " + ", ".join(parts) + "\n", "red"))
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["docker", "logs", "--tail", "30", container_name],
+            capture_output=True, text=True, timeout=4,
+        )
+        out = (r.stdout or "") + (r.stderr or "")
+        if out.strip():
+            sys.stderr.write(color("  --- last 30 log lines ---\n", "dim"))
+            sys.stderr.write(out.rstrip() + "\n")
+    except Exception:
+        pass
 
 
 def stream_chat(
@@ -264,6 +307,8 @@ def interactive_chat(
                 time.sleep(1.0)
         if not healthy:
             sys.stdout.write(color("[server did not become healthy]\n", "red"))
+            if container_name:
+                _explain_container_exit(container_name)
             return
 
     # Resolve effective system prompt and params.

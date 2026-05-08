@@ -1062,9 +1062,13 @@ def _autoselect_chat_alias(cfg) -> str | None:
         print(f"Only one model is downloaded ({alias}); will start it for you.")
         return alias
     print("No models are running. Pick one to start:")
+    snap = hardware.system_snapshot()
+    fit_label = {"yes": "fits VRAM", "spill": "spills", "no": "won't fit"}
     for i, m in enumerate(installed, 1):
         size = f"{m.get('size_gb', '?')} GB"
-        print(f"  {i}. {m['id']:<32} {size:<10} {m.get('name', '')}")
+        verdict, _ = hardware.fits_locally(m, snap)
+        fit = fit_label.get(verdict, "")
+        print(f"  {i}. {m['id']:<32} {size:<10} [{fit}]  {m.get('name', '')}")
     try:
         ans = input(f"\nNumber [1-{len(installed)}]: ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -1911,6 +1915,14 @@ def cmd_chat(args):
     rows, _ = docker_driver.list_running(cfg)
     match = next((r for r in rows if r["alias"] == alias), None)
     container_name = None
+    # Only treat a *running* container as a usable attach target. An
+    # exited container with a matching name is a corpse: its port is
+    # stale, /health will never come up, and `start_model` will fail
+    # to recreate it because of the name collision unless we clear it
+    # first. Treating exited as "not running" funnels into the same
+    # ensure_chat_with_repair path used for cold starts.
+    if match and match.get("state") != "running":
+        match = None
     if not match:
         print(f"{alias} is not running. Starting it now.")
         from . import rag_pipeline as _rp

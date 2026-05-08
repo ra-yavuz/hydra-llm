@@ -1,3 +1,35 @@
+hydra-llm (0.2.7-1) unstable; urgency=low
+
+  * Fix regression in v0.2.6 where `hydra-llm chat` could fail to
+    launch a slow-loading big model. The new chat-model auto-recover
+    wrapper waited 30 seconds for /health before bailing out;
+    16-30 GB GGUFs on iGPU spillover routinely take longer than that
+    to load. The wrapper now only watches for the corrupt-GGUF crash
+    signature inside a brief early window (5 seconds), then hands off
+    to the existing 300-second log-streamed wait in chat.py for the
+    actual readiness check.
+  * Better diagnostics when a chat container fails to come up. The
+    "[server did not become healthy]" / "[container exited before
+    becoming healthy]" paths now also dump `docker inspect` state
+    (status, exit code, OOMKilled flag) and the last 30 log lines so
+    the user can tell at a glance whether the kernel killed it for
+    OOM, llama.cpp aborted, or something else.
+  * `hydra-llm chat` no longer auto-attaches to an exited container
+    that happens to share an alias. An exited container's port is
+    stale and `start_model` would refuse to recreate it because of
+    the name collision; we now treat exited as "needs fresh start".
+  * The "pick one to start" picker annotates each row with a VRAM-fit
+    verdict (`fits VRAM` / `spills` / `won't fit`), computed against
+    `hardware.fits_locally`, so users don't blindly pick a model that
+    overruns their GPU.
+  * `hydra-llm --version` now reports the right version. v0.2.6
+    shipped with `__version__ = "0.2.5"` because the constant in
+    `lib/hydra_llm/__init__.py` is bumped separately from the .deb's
+    `debian/changelog`. RELEASE.md grew a "Things that have bitten
+    us before" entry to remind us next time.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Fri, 08 May 2026 10:24:48 +0000
+
 hydra-llm (0.2.6-1) unstable; urgency=low
 
   * `help` now works as a subverb everywhere. `hydra-llm rag help`,
