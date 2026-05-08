@@ -31,6 +31,11 @@ RAG_STORES_REGISTRY = STATE_DIR / "rag-stores.json"
 # whose mtime is the last embed call. Used by the idle-TTL reaper to
 # stop sidecars that have gone unused.
 EMBEDDER_TOUCH_DIR = STATE_DIR / "embedder-touch"
+# Per-chat-model "last touched" timestamps. One zero-byte file per
+# alias whose mtime is bumped on every chat turn or whenever the
+# reaper observes non-idle CPU on the container. Drives the chat
+# autokill TTL.
+MODEL_TOUCH_DIR = STATE_DIR / "model-touch"
 # Saved store collections (named federations of paths/tags) created by
 # `hydra-llm rag collections save`.
 RAG_COLLECTIONS = STATE_DIR / "rag-collections.json"
@@ -91,5 +96,5 @@ def ensure_user_dirs():
     """Create the user dirs if they don't exist. Safe to call repeatedly."""
     for d in (CONFIG_DIR, STATE_DIR, CACHE_DIR, DATA_DIR, SESSIONS_DIR,
               PERSONAS_DIR, MODELS_DIR_DEFAULT, EMBEDDERS_DIR_DEFAULT,
-              SERVER_OVERRIDES_DIR, EMBEDDER_TOUCH_DIR):
+              SERVER_OVERRIDES_DIR, EMBEDDER_TOUCH_DIR, MODEL_TOUCH_DIR):
         d.mkdir(parents=True, exist_ok=True)

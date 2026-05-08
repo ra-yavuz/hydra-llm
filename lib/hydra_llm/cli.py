@@ -206,6 +206,52 @@ def main():
     p.set_defaults(func=cmd_autostart)
 
     p = sub.add_parser(
+        "reap",
+        help="run one autokill cycle now (stop chat models idle too long)",
+        parents=[json_parent],
+        description=(
+            "Stop chat-model containers whose last activity is older than "
+            "`chat_idle_ttl_seconds` in ~/.config/hydra-llm/config.yaml "
+            "(default 600s, 0 to disable). "
+            "Activity = a chat turn through `hydra-llm chat`, OR observed "
+            "container CPU above `reap_cpu_busy_percent` during this "
+            "cycle (so external API clients also keep their model alive).\n\n"
+            "This is the same cycle the user-level `hydra-llm-reaper.timer` "
+            "runs every 60s when enabled (`hydra-llm reaper enable`)."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.set_defaults(func=cmd_reap)
+
+    p_reaper = sub.add_parser(
+        "reaper",
+        help="manage the user-level systemd timer that runs the autokill reaper",
+        description=(
+            "The reaper stops idle chat-model containers in the background. "
+            "It runs as a user systemd timer, so it costs nothing when "
+            "no models are up and is dormant between ticks.\n\n"
+            "Subcommands:\n"
+            "  status    show whether the timer is installed/enabled/active\n"
+            "  enable    install and start the timer (idempotent)\n"
+            "  disable   stop and remove the timer\n"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_reaper_sub = p_reaper.add_subparsers(dest="reaper_cmd")
+    sp = p_reaper_sub.add_parser("status", help="show timer state",
+                                 parents=[json_parent])
+    sp.set_defaults(func=cmd_reaper_status)
+    sp = p_reaper_sub.add_parser("enable",
+                                 help="install and start the user timer",
+                                 parents=[json_parent])
+    sp.add_argument("--interval", type=int, default=60,
+                    help="tick interval in seconds (default: 60, min: 10)")
+    sp.set_defaults(func=cmd_reaper_enable)
+    sp = p_reaper_sub.add_parser("disable",
+                                 help="stop and remove the user timer",
+                                 parents=[json_parent])
+    sp.set_defaults(func=cmd_reaper_disable)
+    p_reaper.set_defaults(func=cmd_reaper_status)
+
+    p = sub.add_parser(
         "predict",
         help="set the default cap on tokens generated when the client does "
              "not send max_tokens",
@@ -707,10 +753,15 @@ def main():
     # runs when an embed call has actually happened in the past (touch
     # files exist). Skipped during `rag` subcommands so a user who
     # wants to keep an embedder up for inspection isn't fighting us.
-    if args.cmd not in ("rag", "tray"):
+    if args.cmd not in ("rag", "tray", "chat", "start", "reap", "reaper"):
         try:
             from . import embedding as _emb_mod
             _emb_mod.reap_idle_embedders()
+        except Exception:
+            pass
+        try:
+            from . import reaper as _reaper_mod
+            _reaper_mod.reap_idle_models()
         except Exception:
             pass
     sys.exit(args.func(args) or 0)
@@ -1674,6 +1725,14 @@ def cmd_start(args):
         print(f"error: {info.get('error')}", file=sys.stderr)
         return 1
 
+    # Seed a fresh touch so the idle-TTL reaper gives this container at
+    # least one full TTL before it is eligible to be killed.
+    try:
+        from . import reaper as _reaper
+        _reaper.touch_model(entry["id"])
+    except Exception:
+        pass
+
     already = info.get("already_running", False)
     if not args.json:
         if already:
@@ -1771,6 +1830,95 @@ def cmd_autostart(args):
     ok, msg = autostart_mod.enable(entry["id"])
     if args.json:
         print(json.dumps({"ok": ok, "message": msg, "model": entry["id"]}))
+    elif ok:
+        print(msg)
+    else:
+        print(f"error: {msg}", file=sys.stderr)
+    return 0 if ok else 1
+
+
+def cmd_reap(args):
+    """One-shot reaper invocation. Prints what was stopped (if anything)."""
+    from . import reaper as reaper_mod
+    from . import embedding as emb_mod
+    cfg = cfg_mod.load_user_config()
+    chat_ttl = int(cfg.get("chat_idle_ttl_seconds") or 0)
+    emb_ttl = int(cfg.get("embedder_idle_ttl_seconds") or 0)
+    stopped_models = reaper_mod.reap_idle_models(cfg)
+    stopped_embedders = emb_mod.reap_idle_embedders(cfg)
+    if args.json:
+        print(json.dumps({
+            "ok": True,
+            "chat_idle_ttl_seconds": chat_ttl,
+            "embedder_idle_ttl_seconds": emb_ttl,
+            "stopped_models": stopped_models,
+            "stopped_embedders": stopped_embedders,
+        }, indent=2))
+        return 0
+    if chat_ttl <= 0 and emb_ttl <= 0:
+        print("autokill is off (chat_idle_ttl_seconds=0 and "
+              "embedder_idle_ttl_seconds=0).")
+        print("enable by setting chat_idle_ttl_seconds in "
+              f"{paths.USER_CONFIG} (e.g. 600 for 10 minutes).")
+        return 0
+    if not stopped_models and not stopped_embedders:
+        print("nothing idle to reap.")
+        return 0
+    if stopped_models:
+        print("stopped idle chat models:")
+        for a in stopped_models:
+            print(f"  {a}")
+    if stopped_embedders:
+        print("stopped idle embedders:")
+        for a in stopped_embedders:
+            print(f"  {a}")
+    return 0
+
+
+def cmd_reaper_status(args):
+    from . import reaper_unit
+    cfg = cfg_mod.load_user_config()
+    st = reaper_unit.status()
+    st["chat_idle_ttl_seconds"] = int(cfg.get("chat_idle_ttl_seconds") or 0)
+    st["embedder_idle_ttl_seconds"] = int(cfg.get("embedder_idle_ttl_seconds") or 0)
+    if getattr(args, "json", False):
+        print(json.dumps(st, indent=2))
+        return 0
+    if not st["installed"]:
+        print("reaper: not installed")
+        print("enable with: hydra-llm reaper enable")
+    else:
+        state = "enabled" if st["enabled"] else "disabled"
+        active = "" if st["active"] is None else f", active={st['active']}"
+        print(f"reaper: {state}{active}")
+        print(f"  service: {st['service_path']}")
+        print(f"  timer:   {st['timer_path']}")
+    print(f"  chat_idle_ttl_seconds: {st['chat_idle_ttl_seconds']}"
+          f"{' (autokill off)' if st['chat_idle_ttl_seconds'] <= 0 else ''}")
+    print(f"  embedder_idle_ttl_seconds: {st['embedder_idle_ttl_seconds']}")
+    if st.get("error"):
+        print(f"  note: {st['error']}")
+    return 0
+
+
+def cmd_reaper_enable(args):
+    from . import reaper_unit
+    interval = getattr(args, "interval", 60) or 60
+    ok, msg = reaper_unit.enable(interval)
+    if getattr(args, "json", False):
+        print(json.dumps({"ok": ok, "message": msg}))
+    elif ok:
+        print(msg)
+    else:
+        print(f"error: {msg}", file=sys.stderr)
+    return 0 if ok else 1
+
+
+def cmd_reaper_disable(args):
+    from . import reaper_unit
+    ok, msg = reaper_unit.disable()
+    if getattr(args, "json", False):
+        print(json.dumps({"ok": ok, "message": msg}))
     elif ok:
         print(msg)
     else:

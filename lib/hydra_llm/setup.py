@@ -336,6 +336,23 @@ def run_setup(*, build: bool = True, download: bool = True, test: bool = True,
             warn("smoke test did not pass")
             return 1
 
+    # Install the user-level autokill timer so idle chat-model containers
+    # get reaped without the user remembering. Best-effort, never fatal.
+    try:
+        from . import reaper_unit
+        st = reaper_unit.status()
+        if not st.get("installed"):
+            ok, msg = reaper_unit.enable()
+            if ok:
+                sys.stdout.write("\n")
+                sys.stdout.write("    autokill: enabled (idle chat models stop "
+                                 "after chat_idle_ttl_seconds, default 600s).\n")
+                sys.stdout.write("    disable with: hydra-llm reaper disable\n")
+            else:
+                warn(f"could not enable autokill timer: {msg}")
+    except Exception as e:
+        warn(f"autokill timer setup skipped: {e}")
+
     banner("Setup complete")
     sys.stdout.write(f"    image:  hydra-llm/llama-server:{preferred}\n")
     sys.stdout.write(f"\n")

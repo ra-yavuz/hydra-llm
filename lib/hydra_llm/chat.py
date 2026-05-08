@@ -12,6 +12,22 @@ from typing import Optional
 from . import overrides as overrides_mod, paths
 from .personas import Persona
 
+try:
+    from . import reaper as _reaper
+except Exception:  # pragma: no cover
+    _reaper = None
+
+
+def _touch(alias):
+    """Refresh the autokill touch file for `alias`. Fail-soft no-op if the
+    reaper module isn't importable or alias is empty."""
+    if _reaper is None or not alias:
+        return
+    try:
+        _reaper.touch_model(alias)
+    except Exception:
+        pass
+
 
 # ANSI helpers. Disabled when stdout is not a TTY so piped output stays clean.
 def _supports_color() -> bool:
@@ -592,6 +608,9 @@ def interactive_chat(
         messages.append({"role": "user", "content": user})
 
         sys.stdout.write("\n" + color("model> ", "bold", "magenta"))
+        # Bump the autokill touch on the way in too, so a long generation
+        # doesn't get reaped halfway through if the TTL is tight.
+        _touch(alias)
         full, _t = stream_chat(
             base_url, request_messages,
             sampling_params=chat_params,
@@ -600,6 +619,7 @@ def interactive_chat(
         if full:
             messages.append({"role": "assistant", "content": full})
             save_session_to(effective_session_path, messages)
+            _touch(alias)
 
     if len(messages) > initial_message_count:
         save_session_to(effective_session_path, messages)

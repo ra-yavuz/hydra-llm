@@ -1,3 +1,31 @@
+hydra-llm (0.2.11-1) unstable; urgency=low
+
+  * Chat-model autokill (idle-TTL) now actually works. A new user-level
+    systemd timer `hydra-llm-reaper.timer` ticks every 60s and runs
+    `hydra-llm reap`, which stops chat-model containers that have been
+    idle longer than `chat_idle_ttl_seconds` (default: 600s / 10 min;
+    set to 0 to disable). The timer is enabled automatically by
+    `hydra-llm setup`; manage it explicitly with
+    `hydra-llm reaper {status,enable,disable}`.
+  * "Idle" combines two signals so it works for both `hydra-llm chat`
+    users and external API clients (Aider, curl, lillycoder, the
+    Plasma widget): every chat turn refreshes a per-alias touch file,
+    AND each reap cycle samples `docker stats` and treats any
+    container above `reap_cpu_busy_percent` (default 1%) as in use,
+    refreshing the touch on the spot.
+  * Resource cost: the timer wakes once a minute, runs `docker ps` +
+    one `docker stats --no-stream` for the running set, and exits.
+    Cheap enough to leave on by default; no long-lived hydra process
+    sits in memory between ticks.
+  * New `hydra-llm reap` runs one autokill cycle synchronously (also
+    used as the timer's ExecStart). New `hydra-llm reaper` group
+    installs/removes the user systemd units and reports status.
+  * `paths.MODEL_TOUCH_DIR` (`~/.local/state/hydra-llm/model-touch/`)
+    holds one zero-byte file per alias whose mtime is the last
+    observed activity, mirroring the existing embedder touch-dir.
+
+ -- Ramazan Yavuz <yavuzramazan1994@gmail.com>  Fri, 08 May 2026 12:33:00 +0000
+
 hydra-llm (0.2.10-1) unstable; urgency=low
 
   * `hydra-llm chat --new` allocates a fresh session file for the

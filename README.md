@@ -60,6 +60,14 @@ That's also the way to force a rebuild manually for any other reason (corrupted 
 
 When an embedder sidecar fails to start because the GGUF on disk looks corrupt (a partial download, a re-uploaded file with a different SHA, etc.), hydra detects the parse failure in the container logs, deletes the local file, re-downloads from the catalog URL, and retries once. Transparent to the user; no `--force` flag needed. If the second attempt also fails, the original error bubbles up.
 
+## Autokill: idle models stop themselves
+
+Loaded chat models hold VRAM and the kernel page-cache for the GGUF mmap. Forgetting to `hydra-llm stop` a model after you're done is the easy mistake. Hydra ships a small user-level systemd timer (`hydra-llm-reaper.timer`) that wakes once a minute, asks Docker which hydra containers are running, and stops the ones that have been idle longer than `chat_idle_ttl_seconds` (default: 600s / 10 minutes). The timer is enabled automatically the first time `hydra-llm setup` finishes; manage it explicitly with `hydra-llm reaper {status,enable,disable}`. Disable autokill entirely by setting `chat_idle_ttl_seconds: 0` in `~/.config/hydra-llm/config.yaml`.
+
+"Idle" combines two signals so the autokill works for `hydra-llm chat` users and external API clients alike: every chat turn refreshes a per-alias touch file, and each reap cycle also samples `docker stats` and treats any container above `reap_cpu_busy_percent` (default 1%) as in use. Aider, curl, the Plasma widget, lillycoder, anything sending real requests at the model's port keeps it alive purely by using it. The timer itself is dormant between ticks; one cycle is a `docker ps`, a `docker stats --no-stream`, and a few stat() calls. Cost is dominated by docker and stays a small fraction of one core for a couple hundred milliseconds per minute. Run `hydra-llm reap` to trigger one cycle by hand.
+
+The same TTL mechanism has long applied to embedder sidecars (`embedder_idle_ttl_seconds`, default 60s); chat-model autokill brings the two surfaces under one timer.
+
 ## Where it runs
 
 hydra-llm targets Linux first (Debian, Ubuntu, Fedora, Arch, etc.) but the architecture is portable wherever Docker runs:

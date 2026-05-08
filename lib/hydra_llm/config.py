@@ -22,6 +22,17 @@ DEFAULT_CONFIG = {
     # embedders running until explicitly stopped. Default 60s gives a query
     # followed by another query enough time to reuse the warm container.
     "embedder_idle_ttl_seconds": 60,
+    # Tear an idle chat-model container down after this many seconds of
+    # inactivity. "Activity" is any chat turn through `hydra-llm chat` and
+    # any reap-cycle observation of non-trivial container CPU usage (so
+    # external clients hitting /v1/chat/completions also keep the model
+    # alive). Set to 0 to disable autokill. Default 600s (10 minutes).
+    "chat_idle_ttl_seconds": 600,
+    # CPU% threshold for the reaper to consider a container "in use".
+    # llama-server idles at near 0% even with a model loaded; any real
+    # request pushes it well above this. Conservative default keeps idle
+    # background noise from refreshing the touch.
+    "reap_cpu_busy_percent": 1.0,
     # RAG defaults. dual_index off means a single embedder serves all
     # chunks; flip to true (or pass --dual-index on `index`) to use a
     # separate code embedder and prose embedder fused via RRF at query
